@@ -1003,7 +1003,7 @@ function renderBatch(){
         var vn=h("div",{s:{display:"flex",alignItems:"center",gap:"6px"}});
         var vnTxt=h("span",{s:{fontWeight:"600",fontSize:"15px"}});vnTxt.textContent=d.vendor||"Unknown";vn.appendChild(vnTxt);
         if(cardIncomplete){var iFlag=h("span",{s:{fontSize:"10px",color:"var(--orange)",fontWeight:"700"}});iFlag.textContent="\u26A0 INCOMPLETE";vn.appendChild(iFlag)}
-        var ds=h("div",{s:{fontSize:"13px",color:"var(--dim)"}});ds.textContent=buildDescription(d)+" \u00B7 $"+(d.total||0).toFixed(2)+(d.gst?" \u00B7 GST $"+d.gst:"");
+        var ds=h("div",{s:{fontSize:"13px",color:"var(--dim)"}});ds.textContent=buildDescription(d)+" \u00B7 $"+(d.total||0).toFixed(2)+(d.gst?" \u00B7 GST $"+Number(d.gst).toFixed(2):"");
         var dt=h("div",{s:{fontSize:"12px",color:"var(--muted)"}});dt.textContent=(d.date||"")+" \u00B7 "+(d.province||"")+" \u00B7 "+(d.category||"");
         left.appendChild(vn);left.appendChild(ds);left.appendChild(dt);
         var rmBtn=h("button",{s:{background:"transparent",border:"none",color:"var(--red)",fontSize:"18px",cursor:"pointer",padding:"4px 8px",flexShrink:"0"},on:{click:function(){
@@ -1032,8 +1032,8 @@ function renderBatch(){
         ed.appendChild(ef("Date","date",dd.date));
         ed.appendChild(ef("What","what",dd.what||dd.description||""));
         ed.appendChild(ef("Who","who",dd.who||""));
-        ed.appendChild(ef("Total","total",dd.total));
-        ed.appendChild(ef("GST","gst",dd.gst));
+        ed.appendChild(ef("Total","total",dd.total!=null?Number(dd.total).toFixed(2):""));
+        ed.appendChild(ef("GST","gst",dd.gst!=null&&dd.gst!==0?Number(dd.gst).toFixed(2):""));
         // Province select
         var pRow=h("div",{s:{display:"flex",alignItems:"center",gap:"8px"}});
         var pLb=h("label",{s:{fontSize:"11px",color:"var(--dim)",width:"70px",flexShrink:"0",textTransform:"uppercase",fontWeight:"600"}});pLb.textContent="Province";
