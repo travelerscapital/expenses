@@ -33,7 +33,7 @@ select{color-scheme:dark}
 <div id="app"></div>
 <script>
 var PROVINCES=["AB","BC","MB","ON","SK","N.L","YT","QC","FOREIGN"];
-var APP_VERSION="v1.0 \u2014 Apr 1, 2026";
+var APP_VERSION="v1.1 \u2014 Apr 1, 2026";
 var CATEGORIES=["Meals & Entertainment","Travel","Other","Fuel & Mileage","Telephone","Office Supplies","Subscriptions & Dues","IT Expense","Training & Education","Advertising & Promotion","Postage & Courier","Gift","Donations"];
 
 // ── Storage ──
@@ -320,7 +320,8 @@ function doExportZip(allExpenses,monthLabel){
   Promise.all(pdfPromises).then(function(){
     if(Object.keys(zip.files).length===0){alert("No expenses to export.");return}
     // Include backup JSON
-    var backup={expenses:allExpenses,clients:LS.clients.get(),profile:LS.profile.get(),exportDate:new Date().toISOString(),version:APP_VERSION};
+    var receipts={};allExpenses.forEach(function(e){var r=LS.receipt.get(e.id);if(r)receipts[e.id]=r});
+    var backup={expenses:allExpenses,clients:LS.clients.get(),profile:LS.profile.get(),receipts:receipts,exportDate:new Date().toISOString(),version:APP_VERSION};
     zip.file("backup.json",JSON.stringify(backup,null,2));
     return zip.generateAsync({type:"blob"});
   }).then(function(blob){
@@ -1730,7 +1731,8 @@ function renderSettings(){
   bkCard.appendChild(h("div",{s:{fontSize:"13px",color:"var(--dim)",marginBottom:"16px",lineHeight:"1.5"}}));bkCard.lastChild.textContent="Download a backup of all expenses and settings. Save to OneDrive for safekeeping. Backups are also included in every ZIP export.";
 
   var bkDl=h("button",{s:merge(sB,{width:"100%",padding:"14px",fontSize:"15px",background:"transparent",color:"var(--accent)",border:"1px solid var(--accentDim)",marginBottom:"10px"}),on:{click:function(){
-    var backup={expenses:ST.expenses,clients:LS.clients.get(),profile:LS.profile.get(),apiKey:LS.apiKey.get(),exportDate:new Date().toISOString(),version:APP_VERSION};
+    var receipts={};ST.expenses.forEach(function(e){var r=LS.receipt.get(e.id);if(r)receipts[e.id]=r});
+    var backup={expenses:ST.expenses,clients:LS.clients.get(),profile:LS.profile.get(),apiKey:LS.apiKey.get(),receipts:receipts,exportDate:new Date().toISOString(),version:APP_VERSION};
     var blob=new Blob([JSON.stringify(backup,null,2)],{type:"application/json"});
     var a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="TCC_Expenses_Backup_"+today()+".json";
     document.body.appendChild(a);a.click();document.body.removeChild(a);
