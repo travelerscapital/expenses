@@ -33,7 +33,7 @@ select{color-scheme:dark}
 <div id="app"></div>
 <script>
 var PROVINCES=["AB","BC","MB","ON","SK","N.L","YT","QC","FOREIGN"];
-var APP_VERSION="v1.1 \u2014 Apr 1, 2026";
+var APP_VERSION="v1.0 \u2014 Apr 1, 2026";
 var CATEGORIES=["Meals & Entertainment","Travel","Other","Fuel & Mileage","Telephone","Office Supplies","Subscriptions & Dues","IT Expense","Training & Education","Advertising & Promotion","Postage & Courier","Gift","Donations"];
 
 // ── Storage ──
@@ -1696,16 +1696,12 @@ function renderSettings(){
   }}});bulkBtn.textContent="Add All";clCard.appendChild(bulkBtn);
   w.appendChild(clCard);
 
-  // Shortcuts setup
-  var scCard=h("div",{s:{background:"var(--card)",borderRadius:"16px",border:"1px solid var(--border)",padding:"20px",marginBottom:"20px"}});
-  scCard.appendChild(h("div",{s:{fontSize:"12px",fontWeight:"700",color:"var(--accent)",letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:"12px"}}));scCard.lastChild.textContent="Shortcuts Setup";
-  scCard.appendChild(h("div",{s:{fontSize:"14px",fontWeight:"600",marginBottom:"4px"}}));scCard.lastChild.textContent="Action Button (camera):";
-  scCard.appendChild(h("div",{s:{background:"var(--input)",borderRadius:"8px",padding:"10px 12px",marginTop:"4px",marginBottom:"16px",fontFamily:"monospace",fontSize:"12px",color:"var(--accent)",wordBreak:"break-all",border:"1px solid var(--border)"}}));
-  scCard.lastChild.textContent="webapp://squidmuffin.github.io/Expenses/#capture";
-  scCard.appendChild(h("div",{s:{fontSize:"14px",fontWeight:"600",marginBottom:"4px"}}));scCard.lastChild.textContent="Share Sheet Shortcut:";
-  scCard.appendChild(h("div",{s:{fontSize:"13px",color:"var(--dim)",lineHeight:"1.8",marginTop:"4px"}}));
-  scCard.lastChild.innerHTML="1. <b>Make Image from</b> \u2192 Shortcut Input<br>2. <b>Copy to Clipboard</b> \u2192 Image<br>3. <b>Open URL</b> \u2192 webapp://...Expenses/<br><br>Then tap the \uD83D\uDCCB button on the main screen.";
-  w.appendChild(scCard);
+  // Clipboard tips
+  var cbCard=h("div",{s:{background:"var(--card)",borderRadius:"16px",border:"1px solid var(--border)",padding:"20px",marginBottom:"20px"}});
+  cbCard.appendChild(h("div",{s:{fontSize:"12px",fontWeight:"700",color:"var(--accent)",letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:"12px"}}));cbCard.lastChild.textContent="Clipboard Import";
+  cbCard.appendChild(h("div",{s:{fontSize:"13px",color:"var(--dim)",lineHeight:"1.7"}}));
+  cbCard.lastChild.innerHTML="The <b>\uD83D\uDCCB button</b> on the main screen reads an image from your clipboard and sends it to AI for scanning.<br><br><b>How to use it:</b><br>1. Copy a receipt image (screenshot, photo, or from another app)<br>2. Open this app<br>3. Tap \uD83D\uDCCB \u2014 the image is read, processed, and added as an expense<br><br>This works well with an iPhone Shortcut that copies receipt images to the clipboard and opens the app in one step. See the setup guide for details.";
+  w.appendChild(cbCard);
 
   // Save
   var sv=h("button",{s:merge(sB,{width:"100%",padding:"16px",fontSize:"17px",background:"var(--accent)",color:"#fff"}),on:{click:function(){LS.apiKey.set(ST.apiKey);LS.profile.set(prof);up({view:"list"})}}});sv.textContent="Save & Return";w.appendChild(sv);
