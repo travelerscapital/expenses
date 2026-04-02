@@ -33,7 +33,7 @@ select{color-scheme:dark}
 <div id="app"></div>
 <script>
 var PROVINCES=["AB","BC","MB","ON","SK","N.L","YT","QC","FOREIGN"];
-var APP_VERSION="v7.0 \u2014 Apr 1, 2026 12:00 AM MST";
+var APP_VERSION="v7.1 \u2014 Apr 1, 2026 12:30 AM MST";
 var CATEGORIES=["Meals & Entertainment","Travel","Other","Fuel & Mileage","Telephone","Office Supplies","Subscriptions & Dues","IT Expense","Training & Education","Advertising & Promotion","Postage & Courier","Gift","Donations"];
 
 // ── Storage ──
@@ -1644,7 +1644,7 @@ function renderSettings(){
     var wr=h("div",{s:{marginBottom:"12px"}});
     wr.appendChild(h("label",{s:sL}));wr.lastChild.textContent=label;
     var inp=h("input",{type:"text",placeholder:ph||"",value:val||"",s:sI});
-    inp.addEventListener("input",function(e){prof[key]=e.target.value});
+    inp.addEventListener("input",function(e){prof[key]=e.target.value;LS.profile.set(prof)});
     wr.appendChild(inp);return wr;
   }
   prCard.appendChild(profField("Your Name","name","e.g. Ryan Burke",prof.name));
