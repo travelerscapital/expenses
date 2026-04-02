@@ -33,7 +33,7 @@ select{color-scheme:dark}
 <div id="app"></div>
 <script>
 var PROVINCES=["AB","BC","MB","ON","SK","N.L","YT","QC","FOREIGN"];
-var APP_VERSION="v1.0.1 \u2014 Apr 1, 2026";
+var APP_VERSION="v1.0 \u2014 Apr 1, 2026";
 var CATEGORIES=["Meals & Entertainment","Travel","Other","Fuel & Mileage","Telephone","Office Supplies","Subscriptions & Dues","IT Expense","Training & Education","Advertising & Promotion","Postage & Courier","Gift","Donations"];
 
 // ── Storage ──
@@ -727,8 +727,8 @@ function handleClipboardPaste(){
                   var fm=emptyForm();
                   if(p.vendor)fm.vendor=p.vendor;if(p.date)fm.date=p.date;
                   if(p.province&&PROVINCES.indexOf(p.province)>=0){fm.province=p.province;if(p.province==="FOREIGN")fm.currency="USD"}
-                  if(p.total!=null)fm.total=String(p.total);
-                  if(p.gst!=null&&p.gst!==0)fm.gst=String(p.gst);else fm.gst="";
+                  if(p.total!=null)fm.total=Number(p.total).toFixed(2);
+                  if(p.gst!=null&&p.gst!==0)fm.gst=Number(p.gst).toFixed(2);else fm.gst="";
                   if(p.description)fm.what=p.description;
                   if(p.what)fm.what=p.what;if(p.who)fm.who=p.who;
                   if(p.category&&CATEGORIES.indexOf(p.category)>=0)fm.category=p.category;
@@ -1211,8 +1211,8 @@ function renderAdd(){
               var fm=emptyForm();
               if(p.vendor)fm.vendor=p.vendor;if(p.date)fm.date=p.date;
               if(p.province&&PROVINCES.indexOf(p.province)>=0){fm.province=p.province;if(p.province==="FOREIGN")fm.currency="USD"}
-              if(p.total!=null)fm.total=String(p.total);
-              if(p.gst!=null&&p.gst!==0)fm.gst=String(p.gst);else fm.gst="";
+              if(p.total!=null)fm.total=Number(p.total).toFixed(2);
+              if(p.gst!=null&&p.gst!==0)fm.gst=Number(p.gst).toFixed(2);else fm.gst="";
               if(p.description)fm.what=p.description;
               if(p.what)fm.what=p.what;if(p.who)fm.who=p.who;
               if(p.category&&CATEGORIES.indexOf(p.category)>=0)fm.category=p.category;
