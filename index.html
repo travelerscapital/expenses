@@ -27,19 +27,17 @@ select{color-scheme:dark}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </head>
 <body>
 <div id="app"></div>
 <script>
 var PROVINCES=["AB","BC","MB","ON","SK","N.L","YT","QC","FOREIGN"];
-var APP_VERSION="v1.1 \u2014 Jun 24, 2026";
+var APP_VERSION="v1.2 \u2014 Jul 8, 2026";
 var CATEGORIES=["Meals & Entertainment","Travel","Other","Fuel & Mileage","Telephone","Office Supplies","Subscriptions & Dues","IT Expense","Training & Education","Advertising & Promotion","Postage & Courier","Gift","Donations"];
 
 // ── Storage ──
 var LS={
-  expenses:{get:function(){try{return JSON.parse(localStorage.getItem("tcc-exp-v4")||"[]")}catch(e){return[]}},set:function(v){localStorage.setItem("tcc-exp-v4",JSON.stringify(v))}},
-  receipt:{get:function(id){return localStorage.getItem("tcc-rcpt-"+id)},set:function(id,v){try{localStorage.setItem("tcc-rcpt-"+id,v)}catch(e){}},del:function(id){localStorage.removeItem("tcc-rcpt-"+id)}},
+  expenses:{get:function(){try{return JSON.parse(localStorage.getItem("tcc-exp-v4")||"[]")}catch(e){return[]}},set:function(v){try{localStorage.setItem("tcc-exp-v4",JSON.stringify(v))}catch(e){alert("\u26A0\uFE0F Could not save expense data \u2014 device storage may be full. Error: "+e.message)}}},
   apiKey:{get:function(){return localStorage.getItem("tcc-api-key")||""},set:function(v){localStorage.setItem("tcc-api-key",v)}},
   clients:{get:function(){try{return JSON.parse(localStorage.getItem("tcc-clients")||"[]")}catch(e){return[]}},set:function(v){localStorage.setItem("tcc-clients",JSON.stringify(v))}},
   profile:{
@@ -55,6 +53,115 @@ var LS={
     try{var old=JSON.parse(localStorage.getItem("tcc-exp-v3"));old.forEach(function(e){if(!e.client)e.client="Personal"});localStorage.setItem("tcc-exp-v4",JSON.stringify(old))}catch(e){}
   }
 })();
+
+// ── Toast (visible, non-blocking notices — storage failures must never be silent) ──
+function toast(msg,ms){
+  try{
+    var t=document.createElement("div");
+    t.style.cssText="position:fixed;bottom:110px;left:50%;transform:translateX(-50%);background:#1F2937;color:#F9FAFB;border:1px solid #374151;padding:12px 18px;border-radius:12px;font-size:14px;z-index:200;max-width:90%;box-shadow:0 8px 24px rgba(0,0,0,0.5);text-align:center";
+    t.textContent=msg;document.body.appendChild(t);
+    setTimeout(function(){t.style.transition="opacity .4s";t.style.opacity="0";setTimeout(function(){if(t.parentNode)t.parentNode.removeChild(t)},450)},ms||4500);
+  }catch(e){}
+}
+
+// ── Collision-proof ID generator (old Date.now()+random could collide in batch saves) ──
+// Strictly monotonic: microsecond-scale base, bumps forward on same-tick calls.
+var _lastId=0;
+function newId(){var id=Date.now()*1000;if(id<=_lastId)id=_lastId+1;_lastId=id;return id}
+
+// ── Receipt store: IndexedDB-backed, localStorage fallback ──
+// Receipts previously lived in localStorage (~5MB cap; full-size PDFs blew the
+// quota and setItem failures were silently swallowed — receipts vanished).
+// IndexedDB has GB-scale quota. Reads fall back to any legacy localStorage
+// copy so nothing is orphaned mid-migration, and write failures surface to
+// the caller instead of being swallowed.
+var RCPT=(function(){
+  var STORE="receipts",_dbp=null,_lsMode=!window.indexedDB;
+  function lsKey(id){return "tcc-rcpt-"+String(id)}
+  function open(){
+    if(_lsMode)return Promise.reject(new Error("IndexedDB unavailable"));
+    if(_dbp)return _dbp;
+    _dbp=new Promise(function(resolve,reject){
+      try{
+        var req=indexedDB.open("tcc-receipts",1);
+        req.onupgradeneeded=function(){try{req.result.createObjectStore(STORE)}catch(e){}};
+        req.onsuccess=function(){var db=req.result;db.onversionchange=function(){try{db.close()}catch(e){}_dbp=null};resolve(db)};
+        req.onerror=function(){reject(req.error||new Error("IndexedDB open failed"))};
+      }catch(e){reject(e)}
+    });
+    _dbp["catch"](function(){_lsMode=true;_dbp=null});
+    return _dbp;
+  }
+  function tx(mode,fn){
+    return open().then(function(db){
+      return new Promise(function(resolve,reject){
+        var t=db.transaction(STORE,mode),st=t.objectStore(STORE),req=null;
+        try{req=fn(st)}catch(e){reject(e);return}
+        t.oncomplete=function(){resolve(req?req.result:undefined)};
+        t.onerror=function(){reject(t.error||new Error("storage error"))};
+        t.onabort=function(){reject(t.error||new Error("storage aborted"))};
+      });
+    });
+  }
+  return {
+    lsMode:function(){return _lsMode},
+    get:function(id){
+      if(_lsMode)return Promise.resolve(localStorage.getItem(lsKey(id)));
+      return tx("readonly",function(st){return st.get(String(id))}).then(function(v){
+        return (v!=null)?v:localStorage.getItem(lsKey(id));
+      })["catch"](function(){return localStorage.getItem(lsKey(id))});
+    },
+    set:function(id,v){
+      if(_lsMode)return new Promise(function(res,rej){try{localStorage.setItem(lsKey(id),v);res()}catch(e){rej(e)}});
+      return tx("readwrite",function(st){return st.put(v,String(id))});
+    },
+    del:function(id){
+      try{localStorage.removeItem(lsKey(id))}catch(e){}
+      if(_lsMode)return Promise.resolve();
+      return tx("readwrite",function(st){return st["delete"](String(id))})["catch"](function(){});
+    },
+    clear:function(){
+      try{for(var i=localStorage.length-1;i>=0;i--){var k=localStorage.key(i);if(k&&k.indexOf("tcc-rcpt-")===0)localStorage.removeItem(k)}}catch(e){}
+      if(_lsMode)return Promise.resolve();
+      return tx("readwrite",function(st){return st.clear()})["catch"](function(){});
+    },
+    count:function(){
+      if(_lsMode){var n=0;try{for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);if(k&&k.indexOf("tcc-rcpt-")===0)n++}}catch(e){}return Promise.resolve(n)}
+      return tx("readonly",function(st){return st.count()})["catch"](function(){return 0});
+    }
+  };
+})();
+
+// Gather receipts for backups/exports (async; works mid-migration via LS fallback)
+function collectReceipts(list){
+  var out={},chain=Promise.resolve();
+  list.forEach(function(e){
+    chain=chain.then(function(){return RCPT.get(e.id)}).then(function(r){if(r&&r!=="PDF_RECEIPT")out[e.id]=r})["catch"](function(){});
+  });
+  return chain.then(function(){return out});
+}
+
+// One-time migration: move legacy localStorage receipts into IndexedDB.
+// Each entry is removed from localStorage only AFTER a confirmed IDB write,
+// freeing the ~5MB quota that was silently blocking new saves.
+function initReceiptStore(){
+  try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist()["catch"](function(){})}catch(e){}
+  if(RCPT.lsMode())return;
+  var keys=[];
+  try{for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);if(k&&k.indexOf("tcc-rcpt-")===0)keys.push(k)}}catch(e){}
+  if(!keys.length)return;
+  var chain=Promise.resolve(),moved=0;
+  keys.forEach(function(k){
+    chain=chain.then(function(){
+      if(RCPT.lsMode())return;
+      var v=localStorage.getItem(k);if(v==null)return;
+      return RCPT.set(k.slice(9),v).then(function(){localStorage.removeItem(k);moved++});
+    })["catch"](function(){});
+  });
+  chain.then(function(){
+    if(moved>0)toast("Storage upgraded \u2014 "+moved+" receipt"+(moved!==1?"s":"")+" moved to expanded storage");
+  });
+}
 
 // ── AI Parser ──
 var AI_PROMPT='You are reading receipt images to extract expense data. Return ONLY valid JSON, no markdown, no fences.\n\nSTEP 1 - IDENTIFY THE VENDOR:\nThe vendor is the RETAILER or STORE you purchased from — NOT the product brand or manufacturer. For example:\n- Best Buy order for a Logitech mouse → vendor is "Best Buy", NOT "Logitech"\n- Amazon order for a Samsung charger → vendor is "Amazon", NOT "Samsung"\n- Apple Store order for AirPods → vendor is "Apple"\nLook for the store logo, website header, or company name at the top of the receipt/order page.\nDo NOT confuse labels like "TRANSACTION RECORD", "PURCHASE", "CARDHOLDER COPY", "APPROVED" with the business name.\n\nSTEP 2 - MERGE SAME-VENUE RECEIPTS (THIS IS CRITICAL):\nIt is extremely common to have 2 or 3 receipts from the SAME restaurant in one photo — for example an itemized bill, a payment summary, and a credit card slip. These are ALL the same single transaction and MUST be merged into ONE expense object.\n\nMerge rules:\n- If ANY two receipts share the same venue/business name → they are ONE expense\n- Use the HIGHEST total among them (this is usually the credit card slip total which includes tip)\n- Use the GST/tax amount from whichever receipt shows it (usually the itemized bill)\n- If one shows a subtotal of $188 and another shows a total of $236.88 — those are the same transaction, not two expenses\n\nOnly return MULTIPLE expense objects when receipts are from DIFFERENT businesses. Return a JSON array in that case.\n\nSTEP 3 - EXTRACT DATA for each expense:\n{"vendor":"actual business name","date":"YYYY-MM-DD","province":"code","total":number,"gst":null or number,"what":"see rules","who":"see rules","category":"see list"}\n\nDATE: Read carefully. Current year is 2026. Common formats: Mar 13\'26, 03/13/2026, 2026-03-13. The year is most likely 2026 — do not default to 2020 or 2023. For online orders, use the "Order Date" not the shipping/delivery date. For airline eTickets and flight bookings, use the "Issue Date" (when the ticket was purchased/issued), NOT the travel or departure date.\n\nGST: Look carefully for GST, HST, or tax line items in the order summary. Many online receipts show GST in a summary section. If shown, use that amount. If not shown, set to null. For airline eTickets, look at the Taxes/Fees breakdown table — GST is typically listed as "XG8 (GOODS AND SERVICES TAX)" or similar. Use ONLY that GST line, not the total taxes/fees amount.\n\nPROVINCE: For online orders, use the SHIPPING ADDRESS province (where the buyer is located), NOT the seller\'s location. If the shipping address shows Calgary, AB → province is AB.\n\n"what" field (what the expense is for):\n- Restaurant/bar/cafe/coffee shop: "Meals"\n- Telecom (Telus/Bell/Rogers): "Phone"\n- Parking: "Parking"\n- Office supplies/electronics: name the specific item e.g. "Mouse", "Charger", "Monitor", "Keyboard"\n- Fuel: "Fuel"\n- Flights: "Flight", Hotels: "Hotel"\n- Conferences/events: "Networking Event" or event name\n- General: brief 2-3 word description\n\n"who" field (who it is for/related to):\n- Office supplies, telecom, parking, fuel, subscriptions: "Internal"\n- Meals/entertainment: leave as "" (empty) — user will fill in\n- Training/conferences: "Internal" unless clearly for a client\n- If unclear: leave as "" (empty)\n\nCATEGORY must be one of: Meals & Entertainment, Travel, Other, Fuel & Mileage, Telephone, Office Supplies, Subscriptions & Dues, IT Expense, Training & Education, Advertising & Promotion, Postage & Courier, Gift, Donations\n\nPROVINCE codes: AB=Alberta, BC=British Columbia, MB=Manitoba, ON=Ontario, SK=Saskatchewan, N.L=Newfoundland, YT=Yukon, QC=Quebec, FOREIGN=outside Canada\n\nTOTAL — THIS IS CRITICAL: Use the FINAL grand total, NOT the subtotal or the product price. Look for "Order Total", "Total", or "Amount Charged". Many receipts show a Product Subtotal, then shipping, then tax, then a FINAL Order Total — always use the Order Total. For example if a receipt shows Subtotal $129.99, GST $6.50, Order Total $136.49 — use 136.49. For airline eTickets, look at the fare breakdown table — the "Total" line (e.g. "Total CAD 1819.57") is the correct amount, NOT the Fare line or individual payment amounts.';
@@ -238,7 +345,8 @@ function exportReceiptsPDF(expenses,label,clientName){
   var chain=Promise.resolve();
   expenses.forEach(function(exp,idx){
     chain=chain.then(function(){
-      var rcpt=LS.receipt.get(exp.id);if(!rcpt||rcpt==="PDF_RECEIPT")return;
+      return RCPT.get(exp.id).then(function(rcpt){
+      if(!rcpt||rcpt==="PDF_RECEIPT")return;
       var info="#"+(idx+1)+" | "+exp.date+" | "+exp.vendor+" | $"+Number(exp.total).toFixed(2);
       // PDF receipt — render pages via pdf.js
       if(rcpt.indexOf("data:application/pdf")===0){
@@ -255,6 +363,7 @@ function exportReceiptsPDF(expenses,label,clientName){
         });
       });
       return pageChain;
+      });
     });
   });
   return chain.then(function(){
@@ -320,10 +429,11 @@ function doExportZip(allExpenses,monthLabel){
   Promise.all(pdfPromises).then(function(){
     if(Object.keys(zip.files).length===0){alert("No expenses to export.");return}
     // Include backup JSON
-    var receipts={};allExpenses.forEach(function(e){var r=LS.receipt.get(e.id);if(r)receipts[e.id]=r});
-    var backup={expenses:allExpenses,clients:LS.clients.get(),profile:LS.profile.get(),receipts:receipts,exportDate:new Date().toISOString(),version:APP_VERSION};
-    zip.file("backup.json",JSON.stringify(backup,null,2));
-    return zip.generateAsync({type:"blob"});
+    return collectReceipts(allExpenses).then(function(receipts){
+      var backup={expenses:allExpenses,clients:LS.clients.get(),profile:LS.profile.get(),receipts:receipts,exportDate:new Date().toISOString(),version:APP_VERSION};
+      zip.file("backup.json",JSON.stringify(backup,null,2));
+      return zip.generateAsync({type:"blob"});
+    });
   }).then(function(blob){
     if(!blob)return;
     var a=document.createElement("a");
@@ -818,7 +928,7 @@ function renderList(){
     filt.forEach(function(ex){
       var rowIncomplete=isIncomplete(ex);
       var row=h("div",{s:{background:"var(--card)",borderRadius:"12px",padding:"14px 16px",marginBottom:"8px",border:"1px solid "+(rowIncomplete?"var(--orange)":"var(--border)"),cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"},
-        on:{click:function(){up({view:"detail",sel:ex,selImg:LS.receipt.get(ex.id),delId:null})}}});
+        on:{click:function(){RCPT.get(ex.id).then(function(r){up({view:"detail",sel:ex,selImg:r||null,delId:null})})}}});
       var left=h("div",{s:{flex:"1",minWidth:"0"}});
       var nameRow=h("div",{s:{display:"flex",alignItems:"center",gap:"8px",marginBottom:"4px"}});
       var nm=h("span",{s:{fontWeight:"600",fontSize:"15px"}});nm.textContent=ex.vendor;
@@ -1159,14 +1269,17 @@ function renderBatch(){
       clSec.appendChild(clS);w.appendChild(clSec);
 
       var saveAll=h("button",{s:merge(sB,{width:"100%",marginTop:"16px",padding:"16px",fontSize:"17px",background:"var(--accent)",color:"#fff"}),on:{click:function(){
-        var promises=[];
+        var promises=[];var rcptFails=0;
         ST.batchResults.forEach(function(res){
-          if(!res.data||res.removed)return;var d=res.data;var id=Date.now()+Math.floor(Math.random()*10000);
+          if(!res.data||res.removed)return;var d=res.data;var id=newId();
           var entry={id:id,date:d.date||today(),province:PROVINCES.indexOf(d.province)>=0?d.province:"AB",vendor:d.vendor||"Unknown",what:d.what||d.description||"",who:d.who||"",category:CATEGORIES.indexOf(d.category)>=0?d.category:"Other",total:Number(d.total)||0,gst:(d.gst!=null&&d.gst!==0)?Number(d.gst):null,currency:ST._batchCurrency||"CAD",client:ST._batchClient||"Personal"};
           ST.expenses.unshift(entry);
-          if(res.img)promises.push(compressForStorage(res.img).then(function(small){LS.receipt.set(id,small)}));
+          if(res.img)promises.push(compressForStorage(res.img).then(function(small){return RCPT.set(id,small)})["catch"](function(){rcptFails++}));
         });LS.expenses.set(ST.expenses);
-        Promise.all(promises).then(function(){up({view:"list",month:mk(today()),_editIdx:null,_batchCurrency:null,_batchClient:null})});
+        Promise.all(promises).then(function(){
+          if(rcptFails)toast("\u26A0\uFE0F "+rcptFails+" receipt"+(rcptFails!==1?"s":"")+" could not be saved \u2014 expense data kept, use Download Backup to verify");
+          up({view:"list",month:mk(today()),_editIdx:null,_batchCurrency:null,_batchClient:null});
+        });
       }}});
       saveAll.textContent="Save All ("+activeResults.length+")";w.appendChild(saveAll);
     }
@@ -1310,12 +1423,12 @@ function renderAdd(){
 
   var canSave=ST.form.vendor&&ST.form.total&&!ST.parsing&&!ST.saving;
   function doSave(callback){
-    if(!canSave)return;ST.saving=true;render();var id=Date.now();
+    if(!canSave)return;ST.saving=true;render();var id=newId();
     var entry={};var fk=Object.keys(ST.form);for(var i=0;i<fk.length;i++)entry[fk[i]]=ST.form[fk[i]];
     entry.id=id;entry.total=Number(ST.form.total);
     entry.gst=(ST.form.gst!=null&&ST.form.gst!=="")?Number(ST.form.gst):null;
     ST.expenses.unshift(entry);LS.expenses.set(ST.expenses);
-    if(ST.img){compressForStorage(ST.img).then(function(small){LS.receipt.set(id,small);callback(entry)})}else{callback(entry)}
+    if(ST.img){compressForStorage(ST.img).then(function(small){return RCPT.set(id,small)})["catch"](function(e){toast("\u26A0\uFE0F Receipt could not be saved: "+((e&&e.message)||"storage error"))}).then(function(){callback(entry)})}else{callback(entry)}
   }
   var sv=h("button",{s:merge(sB,{width:"100%",marginTop:"24px",padding:"16px",fontSize:"17px",background:"var(--accent)",color:"#fff",opacity:canSave?"1":"0.4"}),
     on:{click:function(){doSave(function(entry){up({view:"list",month:mk(entry.date),saving:false})})}}});
@@ -1350,7 +1463,7 @@ function renderDetail(){
     var dc=h("div",{s:{background:"var(--card)",border:"1px solid rgba(239,68,68,0.2)",borderRadius:"12px",padding:"16px",marginBottom:"20px",textAlign:"center"}});
     var dm=h("div",{s:{fontSize:"14px",marginBottom:"12px"}});dm.textContent="Delete this expense?";
     var dr=h("div",{s:{display:"flex",gap:"10px",justifyContent:"center"}});
-    dr.appendChild(h("button",{s:merge(sB,{background:"var(--red)",color:"#fff",padding:"10px 24px",fontSize:"14px"}),on:{click:function(){ST.expenses=ST.expenses.filter(function(x){return x.id!==e.id});LS.expenses.set(ST.expenses);LS.receipt.del(e.id);up({view:"list",delId:null})}}}));dr.lastChild.textContent="Delete";
+    dr.appendChild(h("button",{s:merge(sB,{background:"var(--red)",color:"#fff",padding:"10px 24px",fontSize:"14px"}),on:{click:function(){ST.expenses=ST.expenses.filter(function(x){return x.id!==e.id});LS.expenses.set(ST.expenses);RCPT.del(e.id);up({view:"list",delId:null})}}}));dr.lastChild.textContent="Delete";
     dr.appendChild(h("button",{s:merge(sB,{background:"var(--card)",color:"var(--dim)",padding:"10px 24px",fontSize:"14px",border:"1px solid var(--border)"}),on:{click:function(){up({delId:null})}}}));dr.lastChild.textContent="Cancel";
     dc.appendChild(dm);dc.appendChild(dr);w.appendChild(dc);
   }
@@ -1726,12 +1839,22 @@ function renderSettings(){
   bkCard.appendChild(h("div",{s:{fontSize:"12px",fontWeight:"700",color:"var(--accent)",letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:"12px"}}));bkCard.lastChild.textContent="Backup & Restore";
   bkCard.appendChild(h("div",{s:{fontSize:"13px",color:"var(--dim)",marginBottom:"16px",lineHeight:"1.5"}}));bkCard.lastChild.textContent="Download a backup of all expenses and settings. Save to OneDrive for safekeeping. Backups are also included in every ZIP export.";
 
+  var stInfo=h("div",{s:{fontSize:"12px",color:"var(--muted)",marginBottom:"14px"}});stInfo.textContent="Checking storage\u2026";bkCard.appendChild(stInfo);
+  RCPT.count().then(function(n){
+    var base=ST.expenses.length+" expense"+(ST.expenses.length!==1?"s":"")+" \u00B7 "+n+" receipt"+(n!==1?"s":"")+" stored"+(RCPT.lsMode()?" \u00B7 \u26A0\uFE0F fallback storage (limited)":"");
+    stInfo.textContent=base;
+    if(navigator.storage&&navigator.storage.estimate){navigator.storage.estimate().then(function(est){
+      if(est&&est.usage!=null)stInfo.textContent=base+" \u00B7 "+(est.usage/1048576).toFixed(1)+" MB used";
+    })["catch"](function(){})}
+  });
+
   var bkDl=h("button",{s:merge(sB,{width:"100%",padding:"14px",fontSize:"15px",background:"transparent",color:"var(--accent)",border:"1px solid var(--accentDim)",marginBottom:"10px"}),on:{click:function(){
-    var receipts={};ST.expenses.forEach(function(e){var r=LS.receipt.get(e.id);if(r)receipts[e.id]=r});
-    var backup={expenses:ST.expenses,clients:LS.clients.get(),profile:LS.profile.get(),apiKey:LS.apiKey.get(),receipts:receipts,exportDate:new Date().toISOString(),version:APP_VERSION};
-    var blob=new Blob([JSON.stringify(backup,null,2)],{type:"application/json"});
-    var a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="TCC_Expenses_Backup_"+today()+".json";
-    document.body.appendChild(a);a.click();document.body.removeChild(a);
+    collectReceipts(ST.expenses).then(function(receipts){
+      var backup={expenses:ST.expenses,clients:LS.clients.get(),profile:LS.profile.get(),apiKey:LS.apiKey.get(),receipts:receipts,exportDate:new Date().toISOString(),version:APP_VERSION};
+      var blob=new Blob([JSON.stringify(backup,null,2)],{type:"application/json"});
+      var a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="TCC_Expenses_Backup_"+today()+".json";
+      document.body.appendChild(a);a.click();document.body.removeChild(a);
+    });
   }}});
   bkDl.textContent="Download Backup";bkCard.appendChild(bkDl);
 
@@ -1748,12 +1871,16 @@ function renderSettings(){
         if(data.clients)LS.clients.set(data.clients);
         if(data.apiKey)LS.apiKey.set(data.apiKey);
         if(data.profile)LS.profile.set(data.profile);
-        if(data.receipts){var rk=Object.keys(data.receipts);for(var ri=0;ri<rk.length;ri++){LS.receipt.set(rk[ri],data.receipts[rk[ri]])}}
         ST.expenses=data.expenses;ST.apiKey=data.apiKey||ST.apiKey;
-        var msg="Restored "+data.expenses.length+" expenses";
-        if(data.receipts)msg+=" with "+Object.keys(data.receipts).length+" receipts";
-        alert(msg+" successfully.");
-        up({view:"list"});
+        var rk=data.receipts?Object.keys(data.receipts):[],rchain=Promise.resolve(),rfails=0;
+        rk.forEach(function(k){rchain=rchain.then(function(){return RCPT.set(k,data.receipts[k])})["catch"](function(){rfails++})});
+        rchain.then(function(){
+          var msg="Restored "+data.expenses.length+" expenses";
+          if(rk.length)msg+=" with "+(rk.length-rfails)+" receipt"+((rk.length-rfails)!==1?"s":"");
+          if(rfails)msg+=" ("+rfails+" receipt"+(rfails!==1?"s":"")+" failed to store)";
+          alert(msg+".");
+          up({view:"list"});
+        });
       }catch(e){alert("Error reading backup: "+e.message)}
     };reader.readAsText(f);
   });
@@ -1765,7 +1892,7 @@ function renderSettings(){
   // Danger zone
   var dz=h("div",{s:{background:"var(--card)",borderRadius:"16px",border:"1px solid rgba(239,68,68,0.2)",padding:"20px",marginTop:"24px"}});
   dz.appendChild(h("div",{s:{fontSize:"12px",fontWeight:"700",color:"var(--red)",letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:"12px"}}));dz.lastChild.textContent="Data Management";
-  var dzb=h("button",{s:merge(sB,{width:"100%",padding:"14px",fontSize:"15px",background:"transparent",color:"var(--red)",border:"1px solid rgba(239,68,68,0.3)"}),on:{click:function(){if(confirm("Delete ALL expenses and receipts? This cannot be undone.")){localStorage.clear();ST.expenses=[];ST.apiKey="";up({view:"list"})}}}});
+  var dzb=h("button",{s:merge(sB,{width:"100%",padding:"14px",fontSize:"15px",background:"transparent",color:"var(--red)",border:"1px solid rgba(239,68,68,0.3)"}),on:{click:function(){if(confirm("Delete ALL expenses and receipts? This cannot be undone.")){localStorage.clear();RCPT.clear();ST.expenses=[];ST.apiKey="";up({view:"list"})}}}});
   dzb.textContent="Clear All Data";dz.appendChild(dzb);w.appendChild(dz);$app.appendChild(w);
 }
 
@@ -1781,6 +1908,7 @@ function checkURLTriggers(){
 }
 checkURLTriggers();
 window.addEventListener("hashchange",function(){checkURLTriggers()});
+initReceiptStore();
 render();
 </script>
 </body>
