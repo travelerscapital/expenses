@@ -32,7 +32,7 @@ select{color-scheme:dark}
 <div id="app"></div>
 <script>
 var PROVINCES=["AB","BC","MB","ON","SK","N.L","YT","QC","FOREIGN"];
-var APP_VERSION="v1.3 \u2014 Jul 14, 2026";
+var APP_VERSION="v1.4 \u2014 Jul 14, 2026";
 var CATEGORIES=["Meals & Entertainment","Travel","Other","Fuel & Mileage","Telephone","Office Supplies","Subscriptions & Dues","IT Expense","Training & Education","Advertising & Promotion","Postage & Courier","Gift","Donations"];
 
 // ── Storage ──
@@ -1549,12 +1549,15 @@ function renderDetail(){
       up({selImg:small});
     })["catch"](function(err){alert("Could not save receipt: "+((err&&err.message)||"storage error"))});
   }
-  var fileInp=h("input",{type:"file",accept:"image/*,.pdf",s:{display:"none"}});
-  fileInp.addEventListener("change",function(ev){
+  function fileToAttach(ev){
     var f=ev.target.files&&ev.target.files[0];if(!f)return;
     var rd=new FileReader();rd.onload=function(e2){attachReceipt(e2.target.result)};rd.readAsDataURL(f);
     ev.target.value="";
-  });
+  }
+  var fileInp=h("input",{type:"file",accept:"image/*,.pdf",s:{display:"none"}});
+  fileInp.addEventListener("change",fileToAttach);
+  var camInp=h("input",{type:"file",accept:"image/*",capture:"environment",s:{display:"none"}});
+  camInp.addEventListener("change",fileToAttach);
   var pasteBtn=h("button",{s:merge(sB,{flex:"1",background:"var(--card)",color:"var(--fg)",padding:"11px 8px",fontSize:"13px",border:"1px solid var(--border)"}),on:{click:function(){
     if(hasRealReceipt&&!confirm("Replace the existing receipt?"))return;
     if(!navigator.clipboard||!navigator.clipboard.read){alert("Clipboard not available.");return}
@@ -1567,14 +1570,19 @@ function renderDetail(){
       alert("No image found on clipboard. Copy a receipt image or screenshot first.");
     })["catch"](function(){alert("Clipboard access denied. Tap \u201CPaste\u201D when iOS asks for permission.")});
   }}});
-  pasteBtn.textContent="\uD83D\uDCCB "+(hasRealReceipt?"Replace from clipboard":"Attach from clipboard");
-  var fileBtn=h("button",{s:merge(sB,{background:"var(--card)",color:"var(--fg)",padding:"11px 14px",fontSize:"13px",border:"1px solid var(--border)"}),on:{click:function(){
+  pasteBtn.textContent="\uD83D\uDCCB Paste";
+  var camBtn=h("button",{s:merge(sB,{flex:"1",background:"var(--card)",color:"var(--fg)",padding:"11px 8px",fontSize:"13px",border:"1px solid var(--border)"}),on:{click:function(){
+    if(hasRealReceipt&&!confirm("Replace the existing receipt?"))return;
+    camInp.click();
+  }}});
+  camBtn.textContent="\uD83D\uDCF7 Camera";
+  var fileBtn=h("button",{s:merge(sB,{flex:"1",background:"var(--card)",color:"var(--fg)",padding:"11px 8px",fontSize:"13px",border:"1px solid var(--border)"}),on:{click:function(){
     if(hasRealReceipt&&!confirm("Replace the existing receipt?"))return;
     fileInp.click();
   }}});
   fileBtn.textContent="\uD83D\uDCC1 File";
   var arRow=h("div",{s:{display:"flex",gap:"8px",marginBottom:"20px"}});
-  arRow.appendChild(pasteBtn);arRow.appendChild(fileBtn);arRow.appendChild(fileInp);
+  arRow.appendChild(pasteBtn);arRow.appendChild(camBtn);arRow.appendChild(fileBtn);arRow.appendChild(fileInp);arRow.appendChild(camInp);
   w.appendChild(arRow);
 
   // Editable fields
