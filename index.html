@@ -32,7 +32,7 @@ select{color-scheme:dark}
 <div id="app"></div>
 <script>
 var PROVINCES=["AB","BC","MB","ON","SK","N.L","YT","QC","FOREIGN"];
-var APP_VERSION="v1.2 \u2014 Jul 8, 2026";
+var APP_VERSION="v1.3 \u2014 Jul 14, 2026";
 var CATEGORIES=["Meals & Entertainment","Travel","Other","Fuel & Mileage","Telephone","Office Supplies","Subscriptions & Dues","IT Expense","Training & Education","Advertising & Promotion","Postage & Courier","Gift","Donations"];
 
 // ── Storage ──
@@ -68,6 +68,9 @@ function toast(msg,ms){
 // Strictly monotonic: microsecond-scale base, bumps forward on same-tick calls.
 var _lastId=0;
 function newId(){var id=Date.now()*1000;if(id<=_lastId)id=_lastId+1;_lastId=id;return id}
+
+// ── Receipt-presence index (sync lookup for list rendering; kept current by RCPT) ──
+var RCPT_IDX={},RCPT_IDX_READY=false;
 
 // ── Receipt store: IndexedDB-backed, localStorage fallback ──
 // Receipts previously lived in localStorage (~5MB cap; full-size PDFs blew the
@@ -112,15 +115,35 @@ var RCPT=(function(){
       })["catch"](function(){return localStorage.getItem(lsKey(id))});
     },
     set:function(id,v){
-      if(_lsMode)return new Promise(function(res,rej){try{localStorage.setItem(lsKey(id),v);res()}catch(e){rej(e)}});
-      return tx("readwrite",function(st){return st.put(v,String(id))});
+      var p;
+      if(_lsMode)p=new Promise(function(res,rej){try{localStorage.setItem(lsKey(id),v);res()}catch(e){rej(e)}});
+      else p=tx("readwrite",function(st){return st.put(v,String(id))});
+      return p.then(function(r){if(v!=="PDF_RECEIPT")RCPT_IDX[String(id)]=1;return r});
+    },
+    keys:function(){ // ids with a real stored receipt (skips legacy "PDF_RECEIPT" sentinel)
+      var ls=[];
+      try{for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);if(k&&k.indexOf("tcc-rcpt-")===0&&localStorage.getItem(k)!=="PDF_RECEIPT")ls.push(k.slice(9))}}catch(e){}
+      if(_lsMode)return Promise.resolve(ls);
+      return open().then(function(db){
+        return new Promise(function(resolve){
+          var out=ls.slice();
+          try{
+            var t=db.transaction(STORE,"readonly"),req=t.objectStore(STORE).openCursor();
+            req.onsuccess=function(){var c=req.result;if(c){if(c.value!=="PDF_RECEIPT")out.push(c.key);c["continue"]()}else{resolve(out)}};
+            req.onerror=function(){resolve(out)};
+            t.onabort=function(){resolve(out)};
+          }catch(e){resolve(out)}
+        });
+      })["catch"](function(){return ls});
     },
     del:function(id){
+      delete RCPT_IDX[String(id)];
       try{localStorage.removeItem(lsKey(id))}catch(e){}
       if(_lsMode)return Promise.resolve();
       return tx("readwrite",function(st){return st["delete"](String(id))})["catch"](function(){});
     },
     clear:function(){
+      RCPT_IDX={};
       try{for(var i=localStorage.length-1;i>=0;i--){var k=localStorage.key(i);if(k&&k.indexOf("tcc-rcpt-")===0)localStorage.removeItem(k)}}catch(e){}
       if(_lsMode)return Promise.resolve();
       return tx("readwrite",function(st){return st.clear()})["catch"](function(){});
@@ -146,6 +169,11 @@ function collectReceipts(list){
 // freeing the ~5MB quota that was silently blocking new saves.
 function initReceiptStore(){
   try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist()["catch"](function(){})}catch(e){}
+  RCPT.keys().then(function(ks){
+    for(var i=0;i<ks.length;i++)RCPT_IDX[String(ks[i])]=1;
+    RCPT_IDX_READY=true;
+    if(ST.view==="list"||ST.view==="detail")render();
+  });
   if(RCPT.lsMode())return;
   var keys=[];
   try{for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);if(k&&k.indexOf("tcc-rcpt-")===0)keys.push(k)}}catch(e){}
@@ -709,9 +737,17 @@ function merge(){var r={};for(var i=0;i<arguments.length;i++){var o=arguments[i]
 function emptyForm(){return{date:today(),province:"AB",vendor:"",what:"",who:"",category:"Meals & Entertainment",total:"",gst:"",currency:"CAD",client:"Personal"}}
 
 // ── Completeness check ──
+function needsReceipt(e){
+  if(!RCPT_IDX_READY)return false;            // index not loaded yet — don't false-flag
+  if(!e||e.id==null)return false;             // unsaved (batch review cards) — receipt saves later
+  var t=(String(e.what||"")+" "+String(e.vendor||"")).toLowerCase();
+  if(t.indexOf("mileage")!==-1)return false;  // mileage claims have no receipt by nature
+  return !RCPT_IDX[String(e.id)];
+}
 function isIncomplete(e){
   if(!e.vendor||!e.date||!e.what||!e.who||!e.total||!e.category||!e.province)return true;
   if(e.currency==="USD"&&!e.cadEquiv)return true;
+  if(needsReceipt(e))return true;
   return false;
 }
 function buildDescription(e){
@@ -1499,6 +1535,47 @@ function renderDetail(){
     var tapHint=h("div",{s:{position:"absolute",bottom:"8px",right:"8px",background:"rgba(0,0,0,0.6)",color:"#fff",fontSize:"11px",padding:"3px 8px",borderRadius:"6px"}});tapHint.textContent=hintText;
     imgWrap.appendChild(tapHint);w.appendChild(imgWrap);
   }
+
+  // ── Attach / replace receipt ──
+  var hasRealReceipt=!!ST.selImg&&ST.selImg!=="PDF_RECEIPT";
+  if(!hasRealReceipt&&needsReceipt(expRef)){
+    var nr=h("div",{s:{background:"rgba(249,115,22,0.08)",border:"1px solid var(--orange)",borderRadius:"12px",padding:"12px 16px",marginBottom:"12px",textAlign:"center",color:"var(--orange)",fontSize:"13px",fontWeight:"600"}});
+    nr.textContent="\u26A0 No receipt attached \u2014 entry is incomplete";
+    w.appendChild(nr);
+  }
+  function attachReceipt(dataUrl){
+    compressForStorage(dataUrl).then(function(small){return RCPT.set(e.id,small).then(function(){return small})}).then(function(small){
+      toast(hasRealReceipt?"Receipt replaced":"Receipt attached");
+      up({selImg:small});
+    })["catch"](function(err){alert("Could not save receipt: "+((err&&err.message)||"storage error"))});
+  }
+  var fileInp=h("input",{type:"file",accept:"image/*,.pdf",s:{display:"none"}});
+  fileInp.addEventListener("change",function(ev){
+    var f=ev.target.files&&ev.target.files[0];if(!f)return;
+    var rd=new FileReader();rd.onload=function(e2){attachReceipt(e2.target.result)};rd.readAsDataURL(f);
+    ev.target.value="";
+  });
+  var pasteBtn=h("button",{s:merge(sB,{flex:"1",background:"var(--card)",color:"var(--fg)",padding:"11px 8px",fontSize:"13px",border:"1px solid var(--border)"}),on:{click:function(){
+    if(hasRealReceipt&&!confirm("Replace the existing receipt?"))return;
+    if(!navigator.clipboard||!navigator.clipboard.read){alert("Clipboard not available.");return}
+    navigator.clipboard.read().then(function(items){
+      for(var i=0;i<items.length;i++){
+        var item=items[i],imgType=null;
+        for(var j=0;j<item.types.length;j++){if(item.types[j].indexOf("image/")===0){imgType=item.types[j];break}}
+        if(imgType){item.getType(imgType).then(function(blob){var rd=new FileReader();rd.onload=function(ev){attachReceipt(ev.target.result)};rd.readAsDataURL(blob)});return}
+      }
+      alert("No image found on clipboard. Copy a receipt image or screenshot first.");
+    })["catch"](function(){alert("Clipboard access denied. Tap \u201CPaste\u201D when iOS asks for permission.")});
+  }}});
+  pasteBtn.textContent="\uD83D\uDCCB "+(hasRealReceipt?"Replace from clipboard":"Attach from clipboard");
+  var fileBtn=h("button",{s:merge(sB,{background:"var(--card)",color:"var(--fg)",padding:"11px 14px",fontSize:"13px",border:"1px solid var(--border)"}),on:{click:function(){
+    if(hasRealReceipt&&!confirm("Replace the existing receipt?"))return;
+    fileInp.click();
+  }}});
+  fileBtn.textContent="\uD83D\uDCC1 File";
+  var arRow=h("div",{s:{display:"flex",gap:"8px",marginBottom:"20px"}});
+  arRow.appendChild(pasteBtn);arRow.appendChild(fileBtn);arRow.appendChild(fileInp);
+  w.appendChild(arRow);
 
   // Editable fields
   var form=h("div",{s:{background:"var(--card)",borderRadius:"16px",border:"1px solid var(--border)",overflow:"hidden",padding:"16px",display:"grid",gap:"12px"}});
