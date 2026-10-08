@@ -32,7 +32,7 @@ select{color-scheme:dark}
 <div id="app"></div>
 <script>
 var PROVINCES=["AB","BC","MB","ON","SK","N.L","YT","QC","FOREIGN"];
-var APP_VERSION="v1.5 \u2014 Jul 14, 2026";
+var APP_VERSION="v1.6 \u2014 Oct 7, 2026";
 var CATEGORIES=["Meals & Entertainment","Travel","Other","Fuel & Mileage","Telephone","Office Supplies","Subscriptions & Dues","IT Expense","Training & Education","Advertising & Promotion","Postage & Courier","Gift","Donations"];
 
 // ── Storage ──
@@ -614,9 +614,9 @@ function draftEmail(allExpenses,monthLabel){
 function exportCSV(expenses,currency,label){
   var rows=expenses.filter(function(e){return e.currency===currency});
   if(!rows.length)return false;
-  var hdr="Date,Province,Paid To,Description,Expense Category,Total,Actual GST/HST Paid,Client";
+  var hdr="Date,Province,Paid To,Description,Expense Category,Total,Actual GST/HST Paid,Client,Report Month";
   var lines=[hdr];
-  rows.forEach(function(e){lines.push('"'+e.date+'","'+e.province+'","'+e.vendor+'","'+buildDescription(e)+'","'+e.category+'",'+e.total+','+(e.gst||"")+','+(e.client||"Personal"))});
+  rows.forEach(function(e){lines.push('"'+e.date+'","'+e.province+'","'+e.vendor+'","'+buildDescription(e)+'","'+e.category+'",'+e.total+','+(e.gst||"")+','+(e.client||"Personal")+','+rmo(e))});
   var blob=new Blob([lines.join("\n")],{type:"text/csv"});
   var a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=currency+"_expense_log_"+label+".csv";
   document.body.appendChild(a);a.click();document.body.removeChild(a);return true;
@@ -625,7 +625,26 @@ function exportCSV(expenses,currency,label){
 // ── Helpers ──
 function mk(d){return(d||"").substring(0,7)}
 function ml(k){if(!k)return"";var p=k.split("-");return["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][+p[1]-1]+" "+p[0]}
-function today(){return new Date().toISOString().split("T")[0]}
+// Local date (toISOString is UTC, which rolls to tomorrow on Calgary evenings)
+function today(){var d=new Date();return d.getFullYear()+"-"+("0"+(d.getMonth()+1)).slice(-2)+"-"+("0"+d.getDate()).slice(-2)}
+// ── Report month: which expense report an entry belongs to ──
+// Stored as e.reportMonth ("YYYY-MM") only when it differs from the receipt date's month.
+// Blank means "follow the receipt date", so editing the date keeps them in sync.
+function rmo(e){return(e&&e.reportMonth)||mk(e&&e.date)}
+function normReportMonth(e){if(!e)return e;if(!e.reportMonth||e.reportMonth===mk(e.date))e.reportMonth="";return e}
+function isCarried(e){return!!(e&&e.reportMonth&&e.reportMonth!==mk(e.date))}
+function addMonths(k,n){var p=k.split("-");var d=new Date(+p[0],+p[1]-1+n,1);return d.getFullYear()+"-"+("0"+(d.getMonth()+1)).slice(-2)}
+// Dropdown of report months: receipt month (default) plus nearby months
+function reportMonthSelect(e,style,onPick){
+  var base=mk(e.date)||mk(today());var cur=rmo(e)||base;
+  var hi=mk(today())>base?mk(today()):base;var opts={};
+  for(var k=addMonths(base,-2);k<=addMonths(hi,2);k=addMonths(k,1))opts[k]=true;
+  opts[cur]=true;
+  var sel=h("select",{s:merge(style,{cursor:"pointer"})});
+  Object.keys(opts).sort().forEach(function(k){var o=h("option",{value:k});o.textContent=ml(k)+(k===base?" (receipt date)":"");if(k===cur)o.selected=true;sel.appendChild(o)});
+  sel.addEventListener("change",function(ev){e.reportMonth=ev.target.value===base?"":ev.target.value;onPick&&onPick(e.reportMonth)});
+  return sel;
+}
 
 // ── Shared receipt viewer with pinch-to-zoom ──
 function openReceiptViewer(imgData){
@@ -734,7 +753,7 @@ var sI={width:"100%",padding:"13px 14px",borderRadius:"10px",border:"1px solid v
 var sL={display:"block",fontSize:"12px",fontWeight:"600",color:"var(--dim)",marginBottom:"6px",textTransform:"uppercase",letterSpacing:"0.05em"};
 var sB={border:"none",borderRadius:"var(--radius)",padding:"14px 20px",fontSize:"15px",fontWeight:"600",cursor:"pointer",fontFamily:"inherit"};
 function merge(){var r={};for(var i=0;i<arguments.length;i++){var o=arguments[i];if(o){var k=Object.keys(o);for(var j=0;j<k.length;j++)r[k[j]]=o[k[j]]}}return r}
-function emptyForm(){return{date:today(),province:"AB",vendor:"",what:"",who:"",category:"Meals & Entertainment",total:"",gst:"",currency:"CAD",client:"Personal"}}
+function emptyForm(){return{date:today(),province:"AB",vendor:"",what:"",who:"",category:"Meals & Entertainment",total:"",gst:"",currency:"CAD",client:"Personal",reportMonth:""}}
 
 // ── Completeness check ──
 function needsReceipt(e){
@@ -900,9 +919,9 @@ function handleClipboardPaste(){
 // ════════════════
 function renderList(){
   var monthSet={};monthSet[mk(today())]=true;
-  ST.expenses.forEach(function(e){monthSet[mk(e.date)]=true});
+  ST.expenses.forEach(function(e){monthSet[rmo(e)]=true});
   var months=Object.keys(monthSet).sort().reverse();
-  var filt=ST.expenses.filter(function(e){return mk(e.date)===ST.month}).sort(function(a,b){return b.date>a.date?1:b.date<a.date?-1:b.id-a.id});
+  var filt=ST.expenses.filter(function(e){return rmo(e)===ST.month}).sort(function(a,b){return b.date>a.date?1:b.date<a.date?-1:b.id-a.id});
   var cadT=0,usdT=0;filt.forEach(function(e){if(e.currency==="CAD")cadT+=Number(e.total);else usdT+=Number(e.total)});
 
   var hdr=h("div",{s:{padding:"54px 20px 0",position:"sticky",top:"0",background:"var(--bg)",zIndex:"10"}});
@@ -973,6 +992,10 @@ function renderList(){
       // Show client badge if not Personal
       if(ex.client&&ex.client!=="Personal"){
         var cbadge=h("span",{s:{fontSize:"10px",fontWeight:"700",padding:"2px 7px",borderRadius:"6px",background:"rgba(245,158,11,0.2)",color:"var(--orange)"}});cbadge.textContent=ex.client;nameRow.appendChild(cbadge);
+      }
+      // Show when the receipt date falls outside this report month
+      if(isCarried(ex)){
+        var mbadge=h("span",{s:{fontSize:"10px",fontWeight:"700",padding:"2px 7px",borderRadius:"6px",background:"var(--card)",border:"1px solid var(--border)",color:"var(--dim)",whiteSpace:"nowrap"}});mbadge.textContent="from "+ml(mk(ex.date)).split(" ")[0];nameRow.appendChild(mbadge);
       }
       var desc=h("div",{s:{fontSize:"13px",color:"var(--dim)",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}});
       desc.textContent=buildDescription(ex)+" \u00B7 "+ex.category;
@@ -1150,7 +1173,7 @@ function renderBatch(){
         var vnTxt=h("span",{s:{fontWeight:"600",fontSize:"15px"}});vnTxt.textContent=d.vendor||"Unknown";vn.appendChild(vnTxt);
         if(cardIncomplete){var iFlag=h("span",{s:{fontSize:"10px",color:"var(--orange)",fontWeight:"700"}});iFlag.textContent="\u26A0 INCOMPLETE";vn.appendChild(iFlag)}
         var ds=h("div",{s:{fontSize:"13px",color:"var(--dim)"}});ds.textContent=buildDescription(d)+" \u00B7 $"+(d.total||0).toFixed(2)+(d.gst?" \u00B7 GST $"+Number(d.gst).toFixed(2):"");
-        var dt=h("div",{s:{fontSize:"12px",color:"var(--muted)"}});dt.textContent=(d.date||"")+" \u00B7 "+(d.province||"")+" \u00B7 "+(d.category||"");
+        var dt=h("div",{s:{fontSize:"12px",color:"var(--muted)"}});dt.textContent=(d.date||"")+" \u00B7 "+(d.province||"")+" \u00B7 "+(d.category||"")+(isCarried(d)?" \u00B7 \u2192 "+ml(d.reportMonth)+" report":"");
         left.appendChild(vn);left.appendChild(ds);left.appendChild(dt);
         var rmBtn=h("button",{s:{background:"transparent",border:"none",color:"var(--red)",fontSize:"18px",cursor:"pointer",padding:"4px 8px",flexShrink:"0"},on:{click:function(){
           ST.batchResults[idx].removed=true;render();
@@ -1176,6 +1199,10 @@ function renderBatch(){
         }
         ed.appendChild(ef("Vendor","vendor",dd.vendor));
         ed.appendChild(ef("Date","date",dd.date));
+        // Report month select
+        var rmRow=h("div",{s:{display:"flex",alignItems:"center",gap:"8px"}});
+        var rmLb=h("label",{s:{fontSize:"11px",color:"var(--dim)",width:"70px",flexShrink:"0",textTransform:"uppercase",fontWeight:"600"}});rmLb.textContent="Report";
+        rmRow.appendChild(rmLb);rmRow.appendChild(reportMonthSelect(dd,merge(sI,{padding:"8px 10px",fontSize:"14px"})));ed.appendChild(rmRow);
         ed.appendChild(ef("What","what",dd.what||dd.description||""));
         ed.appendChild(ef("Who","who",dd.who||""));
         ed.appendChild(ef("Total","total",dd.total!=null?Number(dd.total).toFixed(2):""));
@@ -1305,16 +1332,17 @@ function renderBatch(){
       clSec.appendChild(clS);w.appendChild(clSec);
 
       var saveAll=h("button",{s:merge(sB,{width:"100%",marginTop:"16px",padding:"16px",fontSize:"17px",background:"var(--accent)",color:"#fff"}),on:{click:function(){
-        var promises=[];var rcptFails=0;
+        var promises=[];var rcptFails=0;var goMonth=null;
         ST.batchResults.forEach(function(res){
           if(!res.data||res.removed)return;var d=res.data;var id=newId();
-          var entry={id:id,date:d.date||today(),province:PROVINCES.indexOf(d.province)>=0?d.province:"AB",vendor:d.vendor||"Unknown",what:d.what||d.description||"",who:d.who||"",category:CATEGORIES.indexOf(d.category)>=0?d.category:"Other",total:Number(d.total)||0,gst:(d.gst!=null&&d.gst!==0)?Number(d.gst):null,currency:ST._batchCurrency||"CAD",client:ST._batchClient||"Personal"};
+          var entry={id:id,date:d.date||today(),province:PROVINCES.indexOf(d.province)>=0?d.province:"AB",vendor:d.vendor||"Unknown",what:d.what||d.description||"",who:d.who||"",category:CATEGORIES.indexOf(d.category)>=0?d.category:"Other",total:Number(d.total)||0,gst:(d.gst!=null&&d.gst!==0)?Number(d.gst):null,currency:ST._batchCurrency||"CAD",client:ST._batchClient||"Personal",reportMonth:/^\d{4}-\d{2}$/.test(d.reportMonth||"")?d.reportMonth:""};
+          normReportMonth(entry);if(!goMonth)goMonth=rmo(entry);
           ST.expenses.unshift(entry);
           if(res.img)promises.push(compressForStorage(res.img).then(function(small){return RCPT.set(id,small)})["catch"](function(){rcptFails++}));
         });LS.expenses.set(ST.expenses);
         Promise.all(promises).then(function(){
           if(rcptFails)toast("\u26A0\uFE0F "+rcptFails+" receipt"+(rcptFails!==1?"s":"")+" could not be saved \u2014 expense data kept, use Download Backup to verify");
-          up({view:"list",month:mk(today()),_editIdx:null,_batchCurrency:null,_batchClient:null});
+          up({view:"list",month:goMonth||mk(today()),_editIdx:null,_batchCurrency:null,_batchClient:null});
         });
       }}});
       saveAll.textContent="Save All ("+activeResults.length+")";w.appendChild(saveAll);
@@ -1417,12 +1445,16 @@ function renderAdd(){
   var form=h("div",{s:{display:"grid",gap:"16px"}});
   var r1=h("div",{s:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px"}});
   var dW=h("div");dW.appendChild(h("label",{s:sL}));dW.lastChild.textContent="Date";
-  var dI=h("input",{type:"date",value:ST.form.date,s:sI});dI.addEventListener("input",function(e){ST.form.date=e.target.value});dW.appendChild(dI);
+  var dI=h("input",{type:"date",value:ST.form.date,s:sI});dI.addEventListener("change",function(e){ST.form.date=e.target.value;normReportMonth(ST.form);render()});dW.appendChild(dI);
   var pW=h("div");pW.appendChild(h("label",{s:sL}));pW.lastChild.textContent="Province";
   var pS=h("select",{s:merge(sI,{cursor:"pointer"})});
   PROVINCES.forEach(function(p){var o=h("option",{value:p});o.textContent=p;if(p===ST.form.province)o.selected=true;pS.appendChild(o)});
   pS.addEventListener("change",function(e){ST.form.province=e.target.value;if(e.target.value==="FOREIGN")ST.form.currency="USD";render()});pW.appendChild(pS);
   r1.appendChild(dW);r1.appendChild(pW);form.appendChild(r1);
+
+  // Report month
+  var rmW=h("div");rmW.appendChild(h("label",{s:sL}));rmW.lastChild.textContent="Report Month";
+  rmW.appendChild(reportMonthSelect(ST.form,sI));form.appendChild(rmW);
 
   function tf(label,key,ph){var wr=h("div");wr.appendChild(h("label",{s:sL}));wr.lastChild.textContent=label;var inp=h("input",{type:"text",placeholder:ph||"",value:ST.form[key],s:sI});inp.addEventListener("input",function(e){ST.form[key]=e.target.value});wr.appendChild(inp);return wr}
   form.appendChild(tf("Paid To","vendor","Vendor name"));
@@ -1463,11 +1495,12 @@ function renderAdd(){
     var entry={};var fk=Object.keys(ST.form);for(var i=0;i<fk.length;i++)entry[fk[i]]=ST.form[fk[i]];
     entry.id=id;entry.total=Number(ST.form.total);
     entry.gst=(ST.form.gst!=null&&ST.form.gst!=="")?Number(ST.form.gst):null;
+    normReportMonth(entry);
     ST.expenses.unshift(entry);LS.expenses.set(ST.expenses);
     if(ST.img){compressForStorage(ST.img).then(function(small){return RCPT.set(id,small)})["catch"](function(e){toast("\u26A0\uFE0F Receipt could not be saved: "+((e&&e.message)||"storage error"))}).then(function(){callback(entry)})}else{callback(entry)}
   }
   var sv=h("button",{s:merge(sB,{width:"100%",marginTop:"24px",padding:"16px",fontSize:"17px",background:"var(--accent)",color:"#fff",opacity:canSave?"1":"0.4"}),
-    on:{click:function(){doSave(function(entry){up({view:"list",month:mk(entry.date),saving:false})})}}});
+    on:{click:function(){doSave(function(entry){up({view:"list",month:rmo(entry),saving:false})})}}});
   sv.textContent=ST.saving?"Saving...":"Save Expense";w.appendChild(sv);
 
   // Save & Add Another
@@ -1597,6 +1630,7 @@ function renderDetail(){
       var v=ev.target.value;
       if(type==="number")expRef[key]=v!==""?Number(v):null;
       else expRef[key]=v;
+      if(key==="date"){normReportMonth(expRef);LS.expenses.set(ST.expenses);ST.month=rmo(expRef);render();return}
       LS.expenses.set(ST.expenses);
     });
     row.appendChild(inp);return row;
@@ -1604,6 +1638,10 @@ function renderDetail(){
 
   form.appendChild(editField("Vendor","vendor","text",expRef.vendor));
   form.appendChild(editField("Date","date","date",expRef.date));
+  // Report month
+  var rmW=h("div");rmW.appendChild(h("label",{s:sL}));rmW.lastChild.textContent="Report Month";
+  rmW.appendChild(reportMonthSelect(expRef,sI,function(){LS.expenses.set(ST.expenses);ST.month=rmo(expRef);toast("Moved to "+ml(rmo(expRef))+" report")}));
+  form.appendChild(rmW);
   form.appendChild(editField("What","what","text",expRef.what||expRef.description||""));
   form.appendChild(editField("Who / For","who","text",expRef.who||""));
 
@@ -1691,7 +1729,7 @@ function renderFXReconcile(){
   var ttl=h("h2",{s:{fontSize:"20px",fontWeight:"700"}});ttl.textContent="FX Reconcile";
   nav.appendChild(back);nav.appendChild(ttl);nav.appendChild(h("div",{s:{width:"60px"}}));w.appendChild(nav);
 
-  var usdExps=ST.expenses.filter(function(e){return e.currency==="USD"&&mk(e.date)===(ST._fxMonth||ST.month)});
+  var usdExps=ST.expenses.filter(function(e){return e.currency==="USD"&&rmo(e)===(ST._fxMonth||ST.month)});
 
   if(!usdExps.length){
     var empty=h("div",{s:{textAlign:"center",padding:"40px 20px",color:"var(--dim)"}});empty.textContent="No USD expenses for this month.";
