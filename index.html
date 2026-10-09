@@ -32,7 +32,7 @@ select{color-scheme:dark}
 <div id="app"></div>
 <script>
 var PROVINCES=["AB","BC","MB","ON","SK","N.L","YT","QC","FOREIGN"];
-var APP_VERSION="v1.7 \u2014 Oct 9, 2026";
+var APP_VERSION="v1.8 \u2014 Oct 9, 2026";
 var CATEGORIES=["Meals & Entertainment","Travel","Other","Fuel & Mileage","Telephone","Office Supplies","Subscriptions & Dues","IT Expense","Training & Education","Advertising & Promotion","Postage & Courier","Gift","Donations"];
 
 // ── Storage ──
@@ -192,7 +192,7 @@ function initReceiptStore(){
 }
 
 // ── AI Parser ──
-var AI_PROMPT='You are reading receipt images to extract expense data. Return ONLY valid JSON, no markdown, no fences.\n\nSTEP 1 - IDENTIFY THE VENDOR:\nThe vendor is the RETAILER or STORE you purchased from — NOT the product brand or manufacturer. For example:\n- Best Buy order for a Logitech mouse → vendor is "Best Buy", NOT "Logitech"\n- Amazon order for a Samsung charger → vendor is "Amazon", NOT "Samsung"\n- Apple Store order for AirPods → vendor is "Apple"\nLook for the store logo, website header, or company name at the top of the receipt/order page.\nDo NOT confuse labels like "TRANSACTION RECORD", "PURCHASE", "CARDHOLDER COPY", "APPROVED" with the business name.\n\nSTEP 2 - SAME TRANSACTION vs SEPARATE TRANSACTIONS (THIS IS CRITICAL):\nA photo may contain multiple receipts. Decide whether they are different paper records of ONE transaction, or genuinely SEPARATE transactions. Same-vendor receipts are NOT automatically one expense.\n\nMERGE into ONE expense only when the receipts are the same transaction recorded twice — typically an itemized bill PLUS the card/payment slip that paid it. Same-transaction signals:\n- Different document types (itemized bill vs card slip vs payment summary)\n- Related totals: identical, or the card slip slightly higher because a tip was added (bill subtotal $188 + card slip $236.88 = ONE expense)\n- Same or nearly identical transaction time, or matching reference/order/auth numbers\nWhen merging: use the HIGHEST total (card slip includes tip) and take GST from whichever receipt shows it (usually the itemized bill).\n\nKeep receipts as SEPARATE expenses — even from the SAME vendor — when they are separate purchases. Separate-transaction signals:\n- Two receipts of the SAME document type (two card slips, or two itemized bills)\n- Different transaction times, or different reference/auth/order numbers\n- Unrelated amounts (neither is a subtotal or tipped version of the other)\nExample: two card slips from the same stadium concession, $11.51 at 15:17 and $53.25 at 14:21 with different order numbers = TWO separate expenses.\n\nReturn a JSON array with one expense object per distinct transaction. Receipts from DIFFERENT businesses are always separate objects.\n\nSTEP 3 - EXTRACT DATA for each expense:\n{"vendor":"actual business name","date":"YYYY-MM-DD","province":"code","total":number,"gst":null or number,"what":"see rules","who":"see rules","category":"see list"}\n\nDATE: Read carefully. Current year is 2026. Common formats: Mar 13\'26, 03/13/2026, 2026-03-13. The year is most likely 2026 — do not default to 2020 or 2023. For online orders, use the "Order Date" not the shipping/delivery date. For airline eTickets and flight bookings, use the "Issue Date" (when the ticket was purchased/issued), NOT the travel or departure date.\n\nGST: Look carefully for GST, HST, or tax line items in the order summary. Many online receipts show GST in a summary section. If shown, use that amount. If not shown, set to null. For airline eTickets, look at the Taxes/Fees breakdown table — GST is typically listed as "XG8 (GOODS AND SERVICES TAX)" or similar. Use ONLY that GST line, not the total taxes/fees amount.\n\nPROVINCE: For online orders, use the SHIPPING ADDRESS province (where the buyer is located), NOT the seller\'s location. If the shipping address shows Calgary, AB → province is AB.\n\n"what" field (what the expense is for):\n- Restaurant/bar/cafe/coffee shop: "Meals"\n- Telecom (Telus/Bell/Rogers): "Phone"\n- Parking: "Parking"\n- Office supplies/electronics: name the specific item e.g. "Mouse", "Charger", "Monitor", "Keyboard"\n- Fuel: "Fuel"\n- Flights: "Flight", Hotels: "Hotel"\n- Conferences/events: "Networking Event" or event name\n- General: brief 2-3 word description\n\n"who" field (who it is for/related to):\n- Office supplies, telecom, parking, fuel, subscriptions: "Internal"\n- Meals/entertainment: leave as "" (empty) — user will fill in\n- Training/conferences: "Internal" unless clearly for a client\n- If unclear: leave as "" (empty)\n\nCATEGORY must be one of: Meals & Entertainment, Travel, Other, Fuel & Mileage, Telephone, Office Supplies, Subscriptions & Dues, IT Expense, Training & Education, Advertising & Promotion, Postage & Courier, Gift, Donations\n\nPROVINCE codes: AB=Alberta, BC=British Columbia, MB=Manitoba, ON=Ontario, SK=Saskatchewan, N.L=Newfoundland, YT=Yukon, QC=Quebec, FOREIGN=outside Canada\n\nRIDESHARE / TAXI (Lyft, Uber, taxi apps): vendor is the app company ("Lyft", "Uber"), NOT a pickup, stop or drop-off address. what = "Rideshare", category = "Travel", who = "Internal". Date = the trip date at the top of the receipt. Total = the final "Total charge" / amount charged to the card (after tip and any promo), NOT the fare line. GST = the GST line.\n\nMISSING FIELDS: if a field is genuinely not visible, use null. NEVER invent a placeholder date such as YYYY-01-01.\n\nMULTIPLE IMAGES: if you are given several images, they are consecutive top-to-bottom sections of ONE tall screenshot with slight overlap. Read them together as a single receipt.\n\nOUTPUT FORMAT: respond with the JSON array ONLY. No notes, explanations or caveats before or after it.\n\nTOTAL — THIS IS CRITICAL: Use the FINAL grand total, NOT the subtotal or the product price. Look for "Order Total", "Total", or "Amount Charged". Many receipts show a Product Subtotal, then shipping, then tax, then a FINAL Order Total — always use the Order Total. For example if a receipt shows Subtotal $129.99, GST $6.50, Order Total $136.49 — use 136.49. For airline eTickets, look at the fare breakdown table — the "Total" line (e.g. "Total CAD 1819.57") is the correct amount, NOT the Fare line or individual payment amounts.';
+var AI_PROMPT='You are reading receipt images to extract expense data. Return ONLY valid JSON, no markdown, no fences.\n\nSTEP 1 - IDENTIFY THE VENDOR:\nThe vendor is the RETAILER or STORE you purchased from — NOT the product brand or manufacturer. For example:\n- Best Buy order for a Logitech mouse → vendor is "Best Buy", NOT "Logitech"\n- Amazon order for a Samsung charger → vendor is "Amazon", NOT "Samsung"\n- Apple Store order for AirPods → vendor is "Apple"\nLook for the store logo, website header, or company name at the top of the receipt/order page.\nDo NOT confuse labels like "TRANSACTION RECORD", "PURCHASE", "CARDHOLDER COPY", "APPROVED" with the business name.\n\nSTEP 2 - SAME TRANSACTION vs SEPARATE TRANSACTIONS (THIS IS CRITICAL):\nA photo may contain multiple receipts. Decide whether they are different paper records of ONE transaction, or genuinely SEPARATE transactions. Same-vendor receipts are NOT automatically one expense.\n\nMERGE into ONE expense only when the receipts are the same transaction recorded twice — typically an itemized bill PLUS the card/payment slip that paid it. Same-transaction signals:\n- Different document types (itemized bill vs card slip vs payment summary)\n- Related totals: identical, or the card slip slightly higher because a tip was added (bill subtotal $188 + card slip $236.88 = ONE expense)\n- Same or nearly identical transaction time, or matching reference/order/auth numbers\nWhen merging: use the HIGHEST total (card slip includes tip) and take GST from whichever receipt shows it (usually the itemized bill).\n\nKeep receipts as SEPARATE expenses — even from the SAME vendor — when they are separate purchases. Separate-transaction signals:\n- Two receipts of the SAME document type (two card slips, or two itemized bills)\n- Different transaction times, or different reference/auth/order numbers\n- Unrelated amounts (neither is a subtotal or tipped version of the other)\nExample: two card slips from the same stadium concession, $11.51 at 15:17 and $53.25 at 14:21 with different order numbers = TWO separate expenses.\n\nReturn a JSON array with one expense object per distinct transaction. Receipts from DIFFERENT businesses are always separate objects.\n\nSTEP 3 - EXTRACT DATA for each expense:\n{"vendor":"actual business name","date":"YYYY-MM-DD","province":"code","total":number,"gst":null or number,"what":"see rules","who":"see rules","category":"see list"}\n\nDATE: Read carefully. Current year is 2026. Common formats: Mar 13\'26, 03/13/2026, 2026-03-13. The year is most likely 2026 — do not default to 2020 or 2023. For online orders, use the "Order Date" not the shipping/delivery date. For airline eTickets and flight bookings, use the "Issue Date" (when the ticket was purchased/issued), NOT the travel or departure date.\n\nGST: Look carefully for GST, HST, or tax line items in the order summary. Many online receipts show GST in a summary section. If shown, use that amount. If not shown, set to null. For airline eTickets, look at the Taxes/Fees breakdown table — GST is typically listed as "XG8 (GOODS AND SERVICES TAX)" or similar. Use ONLY that GST line, not the total taxes/fees amount.\n\nPROVINCE: For online orders, use the SHIPPING ADDRESS province (where the buyer is located), NOT the seller\'s location. If the shipping address shows Calgary, AB → province is AB.\n\n"what" field (what the expense is for):\n- Restaurant/bar/cafe/coffee shop: "Meals"\n- Telecom (Telus/Bell/Rogers): "Phone"\n- Parking: "Parking"\n- Office supplies/electronics: name the specific item e.g. "Mouse", "Charger", "Monitor", "Keyboard"\n- Fuel: "Fuel"\n- Flights: "Flight", Hotels: "Hotel"\n- Conferences/events: "Networking Event" or event name\n- General: brief 2-3 word description\n\n"who" field (who it is for/related to):\n- Office supplies, telecom, parking, fuel, subscriptions: "Internal"\n- Meals/entertainment: leave as "" (empty) — user will fill in\n- Training/conferences: "Internal" unless clearly for a client\n- If unclear: leave as "" (empty)\n\nCATEGORY must be one of: Meals & Entertainment, Travel, Other, Fuel & Mileage, Telephone, Office Supplies, Subscriptions & Dues, IT Expense, Training & Education, Advertising & Promotion, Postage & Courier, Gift, Donations\n\nPROVINCE codes: AB=Alberta, BC=British Columbia, MB=Manitoba, ON=Ontario, SK=Saskatchewan, N.L=Newfoundland, YT=Yukon, QC=Quebec, FOREIGN=outside Canada\n\nRIDESHARE / TAXI (Lyft, Uber, taxi apps): vendor is the app company ("Lyft", "Uber"), NOT a pickup, stop or drop-off address. what = "Rideshare", category = "Travel", who = "Internal". Date = the trip date at the top of the receipt. Total = the final "Total charge" / amount charged to the card (after tip and any promo), NOT the fare line. GST = the GST line.\n\nCUT-OFF CHECK: add a "warning" field to each expense. If the image looks cropped or cut off so that the final total, the tax line, or the date is not fully visible (e.g. text clipped at an edge, payment section missing), set warning to a short plain sentence saying what is missing, e.g. "Receipt is cut off - final total and GST not visible". Otherwise set warning to null.\n\nMISSING FIELDS: if a field is genuinely not visible, use null. NEVER invent a placeholder date such as YYYY-01-01.\n\nMULTIPLE IMAGES: if you are given several images, they are consecutive top-to-bottom sections of ONE tall screenshot with slight overlap. Read them together as a single receipt.\n\nOUTPUT FORMAT: respond with the JSON array ONLY. No notes, explanations or caveats before or after it.\n\nTOTAL — THIS IS CRITICAL: Use the FINAL grand total, NOT the subtotal or the product price. Look for "Order Total", "Total", or "Amount Charged". Many receipts show a Product Subtotal, then shipping, then tax, then a FINAL Order Total — always use the Order Total. For example if a receipt shows Subtotal $129.99, GST $6.50, Order Total $136.49 — use 136.49. For airline eTickets, look at the fare breakdown table — the "Total" line (e.g. "Total CAD 1819.57") is the correct amount, NOT the Fare line or individual payment amounts.';
 
 
 // Extract the first complete JSON array/object from model text, ignoring any stray notes around it
@@ -881,14 +881,12 @@ function compressForStorage(dataUrl){
     var img=new Image();
     img.onload=function(){
       var canvas=document.createElement("canvas");
-      var maxDim=1000;
       var w=img.width,hh=img.height;
-      if(w>maxDim||hh>maxDim){
-        if(w>hh){hh=Math.round(hh*(maxDim/w));w=maxDim}else{w=Math.round(w*(maxDim/hh));hh=maxDim}
-      }
+      // Keep text legible: limit width (not long edge) so tall screenshots stay sharp
+      var sc=Math.min(1,900/w,4000/hh);w=Math.round(w*sc);hh=Math.round(hh*sc);
       canvas.width=w;canvas.height=hh;
       canvas.getContext("2d").drawImage(img,0,0,w,hh);
-      var compressed=canvas.toDataURL("image/jpeg",0.35);
+      var compressed=canvas.toDataURL("image/jpeg",0.6);
       resolve(compressed);
     };
     img.onerror=function(){resolve(dataUrl)};
@@ -902,7 +900,7 @@ function compressForStorage(dataUrl){
 var ST={
   view:"list",expenses:LS.expenses.get(),
   form:emptyForm(),
-  img:null,parsing:false,parseError:null,saving:false,
+  img:null,parsing:false,parseError:null,parseWarn:null,saving:false,
   month:mk(today()),sel:null,selImg:null,delId:null,
   apiKey:LS.apiKey.get(),
   batchQueue:[],batchResults:[],batchProcessing:false,batchIdx:0,
@@ -929,7 +927,7 @@ function handleClipboardPaste(){
           var reader=new FileReader();
           reader.onload=function(ev){
             var dataUrl=ev.target.result;
-            ST.img=dataUrl;ST.parsing=true;ST.parseError=null;ST.form=emptyForm();ST.view="add";render();
+            ST.img=dataUrl;ST.parsing=true;ST.parseWarn=null;ST.parseError=null;ST.form=emptyForm();ST.view="add";render();
             compressImage(dataUrl).then(function(c){
             parseReceipt(c.b64,c.mime).then(function(parsed){
               if(parsed&&!parsed.error){
@@ -947,7 +945,7 @@ function handleClipboardPaste(){
                   if(p.description)fm.what=p.description;
                   if(p.what)fm.what=p.what;if(p.who)fm.who=p.who;
                   if(p.category&&CATEGORIES.indexOf(p.category)>=0)fm.category=p.category;
-                  up({form:fm,parsing:false,parseError:null});
+                  up({form:fm,parsing:false,parseError:null,parseWarn:p.warning||null});
                 } else {up({parsing:false,parseError:"No expenses found"})}
               } else {up({parsing:false,parseError:parsed?parsed.error:"Could not read receipt"})}
             });
@@ -1136,7 +1134,7 @@ function renderBatch(){
 
     // Manual entry link
     var manBtn=h("button",{s:merge(sB,{width:"100%",padding:"12px",fontSize:"14px",background:"transparent",color:"var(--dim)",marginBottom:"16px"}),on:{click:function(){
-      up({view:"add",form:emptyForm(),img:null,parsing:false,parseError:null});
+      up({view:"add",form:emptyForm(),img:null,parsing:false,parseError:null,parseWarn:null});
     }}});
     manBtn.textContent="Manual entry (no receipt)";w.appendChild(manBtn);
 
@@ -1424,7 +1422,7 @@ function renderAdd(){
     function handleFile(f){
       if(!f)return;var reader=new FileReader();
       reader.onload=function(ev){
-        var dataUrl=ev.target.result;ST.img=dataUrl;ST.parsing=true;render();
+        var dataUrl=ev.target.result;ST.img=dataUrl;ST.parsing=true;ST.parseWarn=null;render();
         compressImage(dataUrl).then(function(c){
         parseReceipt(c.b64,c.mime).then(function(parsed){
           if(parsed&&!parsed.error){
@@ -1443,7 +1441,7 @@ function renderAdd(){
               if(p.description)fm.what=p.description;
               if(p.what)fm.what=p.what;if(p.who)fm.who=p.who;
               if(p.category&&CATEGORIES.indexOf(p.category)>=0)fm.category=p.category;
-              up({form:fm,parsing:false,parseError:null});
+              up({form:fm,parsing:false,parseError:null,parseWarn:p.warning||null});
             } else {up({parsing:false,parseError:"No expenses found"})}
           } else {up({parsing:false,parseError:parsed?parsed.error:"Unknown error"})}
         });
@@ -1481,13 +1479,19 @@ function renderAdd(){
       ov.appendChild(ovT);ov.appendChild(h("div",{s:{width:"28px",height:"28px",border:"3px solid var(--border)",borderTopColor:"var(--accent)",borderRadius:"50%",animation:"spin .8s linear infinite"}}));
       prev.appendChild(ov);
     }
-    var cls=h("button",{s:{position:"absolute",top:"8px",right:"8px",background:"rgba(0,0,0,0.6)",color:"#fff",border:"none",borderRadius:"8px",padding:"4px 10px",fontSize:"13px",cursor:"pointer"},on:{click:function(){up({img:null})}}});
+    var cls=h("button",{s:{position:"absolute",top:"8px",right:"8px",background:"rgba(0,0,0,0.6)",color:"#fff",border:"none",borderRadius:"8px",padding:"4px 10px",fontSize:"13px",cursor:"pointer"},on:{click:function(){up({img:null,parseWarn:null})}}});
     cls.textContent="\u2715";prev.appendChild(cls);w.appendChild(prev);
     if(ST.parseError){
       var errBox=h("div",{s:{background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.3)",borderRadius:"10px",padding:"12px 14px",marginBottom:"16px"}});
       var et=h("div",{s:{fontSize:"12px",fontWeight:"700",color:"var(--red)",marginBottom:"4px"}});et.textContent="AI Scan Failed";
       var em=h("div",{s:{fontSize:"13px",color:"var(--dim)",wordBreak:"break-word"}});em.textContent=ST.parseError;
       errBox.appendChild(et);errBox.appendChild(em);w.appendChild(errBox);
+    }
+    if(ST.parseWarn&&!ST.parseError){
+      var wb=h("div",{s:{background:"rgba(245,158,11,0.1)",border:"1px solid rgba(245,158,11,0.35)",borderRadius:"10px",padding:"12px 14px",marginBottom:"16px"}});
+      var wt=h("div",{s:{fontSize:"12px",fontWeight:"700",color:"#f59e0b",marginBottom:"4px"}});wt.textContent="Check Receipt";
+      var wm=h("div",{s:{fontSize:"13px",color:"var(--dim)",wordBreak:"break-word"}});wm.textContent=ST.parseWarn+". Verify the total and GST against the full receipt.";
+      wb.appendChild(wt);wb.appendChild(wm);w.appendChild(wb);
     }
   }
 
