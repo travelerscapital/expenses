@@ -32,7 +32,7 @@ select{color-scheme:dark}
 <div id="app"></div>
 <script>
 var PROVINCES=["AB","BC","MB","ON","SK","N.L","YT","QC","FOREIGN"];
-var APP_VERSION="v1.9 \u2014 Oct 20, 2026";
+var APP_VERSION="v1.10 \u2014 Oct 20, 2026";
 var CATEGORIES=["Meals & Entertainment","Travel","Other","Fuel & Mileage","Telephone","Office Supplies","Subscriptions & Dues","IT Expense","Training & Education","Advertising & Promotion","Postage & Courier","Gift","Donations"];
 
 // ── Storage ──
@@ -453,7 +453,7 @@ function exportReceiptsPDF(expenses,label,clientName){
 }
 
 // ── ZIP Export (bundles everything) ──
-function doExportZip(allExpenses,monthLabel,zipSuffix){
+function doExportZip(allExpenses,monthLabel,zipSuffix,onDone){
   if(!allExpenses.length){alert("No expenses to export.");return}
   zipSuffix=zipSuffix||"";
   // Group by client
@@ -515,6 +515,7 @@ function doExportZip(allExpenses,monthLabel,zipSuffix){
   }).then(function(blob){
     if(!blob)return;
     downloadBlob(blob,"TCC_Expenses_"+monthLabel+zipSuffix+".zip");
+    if(onDone)onDone();
   });
 }
 
@@ -667,6 +668,8 @@ function claimGst(e){if(e.gst==null||e.gst==="")return null;var g=Number(e.gst);
 function fxReady(list){var p=list.filter(function(e){return isFX(e)&&!e.cadEquiv});if(!p.length)return true;alert(p.length+" USD expense"+(p.length>1?"s have":" has")+" no CAD amount yet ("+p.map(function(e){return e.vendor}).join(", ")+"). Run FX Reconcile first, or set them to Reimburse In USD.");return false}
 function mainItems(list){return list.filter(function(e){return!isSeparate(e)})}
 function sepItems(list){return list.filter(function(e){return isSeparate(e)})}
+function sepPending(list){return list.filter(function(e){return isSeparate(e)&&!e.sepExportedAt})}
+function markSepExported(list){var d=today();list.forEach(function(e){if(isSeparate(e))e.sepExportedAt=d});LS.expenses.set(ST.expenses);render()}
 function downloadBlob(blob,name){var a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(function(){URL.revokeObjectURL(a.href)},60000)}
 function normReportMonth(e){if(!e)return e;if(!e.reportMonth||e.reportMonth===mk(e.date))e.reportMonth="";return e}
 function isCarried(e){return!!(e&&e.reportMonth&&e.reportMonth!==mk(e.date))}
@@ -997,9 +1000,15 @@ function renderList(){
     ];
     if(hasUSD)menuItems.splice(1,0,{label:"FX Reconcile (USD)",action:function(){up({view:"fxreconcile",_fxMonth:ST.month})}});
     if(sepF.length){
+      var sepP=sepPending(sepF),stamp="_Separate_"+today().replace(/-/g,"");
       menuItems.push({sep:true});
-      menuItems.push({label:"Separate Items (ZIP)",action:function(){if(fxReady(sepF))doExportZip(sepF,lbl,"_Separate")}});
-      menuItems.push({label:"Separate Items (CSV)",action:function(){exportCSV(sepF,lbl,"_Separate")}});
+      if(sepP.length){
+        menuItems.push({label:"New Separate Items (ZIP) \u00B7 "+sepP.length,action:function(){if(fxReady(sepP))doExportZip(sepP,lbl,stamp,function(){markSepExported(sepP);toast(sepP.length+" item"+(sepP.length>1?"s":"")+" marked exported")})}});
+        menuItems.push({label:"New Separate Items (CSV) \u00B7 "+sepP.length,action:function(){if(exportCSV(sepP,lbl,stamp)){markSepExported(sepP);toast(sepP.length+" item"+(sepP.length>1?"s":"")+" marked exported")}}});
+      } else {
+        menuItems.push({label:"No new separate items",action:function(){toast("All separate items already exported")}});
+      }
+      if(sepF.length>sepP.length)menuItems.push({label:"Re-export All Separate (ZIP)",action:function(){if(fxReady(sepF))doExportZip(sepF,lbl,"_Separate_All")}});
     }
     menuItems.forEach(function(it){
       if(it.sep){menu.appendChild(h("div",{s:{height:"1px",background:"var(--border)",margin:"6px 4px"}}));return}
@@ -1026,7 +1035,7 @@ function renderList(){
   sumRow.appendChild(sumCard("CAD"+(fxPend?" *":""),"$"+cadT.toFixed(2)));
   if(usdT>0)sumRow.appendChild(sumCard("USD","$"+usdT.toFixed(2)));
   sumRow.appendChild(sumCard("Items",""+mainF.length));
-  if(sepF.length)sumRow.appendChild(sumCard("Separate",""+sepF.length));
+  if(sepF.length)sumRow.appendChild(sumCard("Separate",sepPending(sepF).length+"/"+sepF.length));
   var incCount=filt.filter(function(e){return isIncomplete(e)}).length;
   if(incCount>0)sumRow.appendChild(sumCard("\u26A0",""+incCount));
   $app.appendChild(sumRow);
@@ -1053,7 +1062,7 @@ function renderList(){
         var cbadge=h("span",{s:{fontSize:"10px",fontWeight:"700",padding:"2px 7px",borderRadius:"6px",background:"rgba(245,158,11,0.2)",color:"var(--orange)"}});cbadge.textContent=ex.client;nameRow.appendChild(cbadge);
       }
       if(isSeparate(ex)){
-        var sbadge=h("span",{s:{fontSize:"10px",fontWeight:"700",padding:"2px 7px",borderRadius:"6px",background:"rgba(34,197,94,0.15)",color:"var(--green)",whiteSpace:"nowrap"}});sbadge.textContent="SEPARATE";nameRow.appendChild(sbadge);
+        var sbadge=h("span",{s:{fontSize:"10px",fontWeight:"700",padding:"2px 7px",borderRadius:"6px",background:"rgba(34,197,94,0.15)",color:"var(--green)",whiteSpace:"nowrap"}});sbadge.textContent=ex.sepExportedAt?"EXPORTED":"SEPARATE";if(ex.sepExportedAt){sbadge.style.background="var(--card)";sbadge.style.border="1px solid var(--border)";sbadge.style.color="var(--dim)"}nameRow.appendChild(sbadge);
       }
       // Show when the receipt date falls outside this report month
       if(isCarried(ex)){
@@ -1757,13 +1766,17 @@ function renderDetail(){
   }
 
   // Submit separately toggle
-  var spW=h("div",{s:{background:"var(--card)",border:"1px solid "+(isSeparate(expRef)?"var(--green)":"var(--border)"),borderRadius:"12px",padding:"12px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:"12px",cursor:"pointer"},on:{click:function(){expRef.separate=!isSeparate(expRef);LS.expenses.set(ST.expenses);render();toast(isSeparate(expRef)?"Excluded from month-end export":"Included in month-end export")}}});
+  var spW=h("div",{s:{background:"var(--card)",border:"1px solid "+(isSeparate(expRef)?"var(--green)":"var(--border)"),borderRadius:"12px",padding:"12px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:"12px",cursor:"pointer"},on:{click:function(){expRef.separate=!isSeparate(expRef);if(!expRef.separate)delete expRef.sepExportedAt;LS.expenses.set(ST.expenses);render();toast(isSeparate(expRef)?"Excluded from month-end export":"Included in month-end export")}}});
   var spT=h("div");
   spT.appendChild(h("div",{s:{fontSize:"14px",fontWeight:"600"}}));spT.lastChild.textContent="Submit separately";
-  spT.appendChild(h("div",{s:{fontSize:"11px",color:"var(--dim)",marginTop:"2px"}}));spT.lastChild.textContent=isSeparate(expRef)?"Left out of the month-end export and totals. Export via Separate Items.":"Included in the regular month-end export.";
+  spT.appendChild(h("div",{s:{fontSize:"11px",color:"var(--dim)",marginTop:"2px"}}));spT.lastChild.textContent=isSeparate(expRef)?(expRef.sepExportedAt?"Exported separately on "+expRef.sepExportedAt+".":"Not yet exported. Use New Separate Items in the Export menu."):"Included in the regular month-end export.";
   var sw=h("div",{s:{width:"46px",height:"28px",borderRadius:"14px",background:isSeparate(expRef)?"var(--green)":"var(--border)",position:"relative",flexShrink:"0",transition:"background 0.15s"}});
   sw.appendChild(h("div",{s:{position:"absolute",top:"3px",left:isSeparate(expRef)?"21px":"3px",width:"22px",height:"22px",borderRadius:"11px",background:"#fff",transition:"left 0.15s"}}));
   spW.appendChild(spT);spW.appendChild(sw);form.appendChild(spW);
+  if(isSeparate(expRef)&&expRef.sepExportedAt){
+    var rx=h("button",{s:merge(sB,{width:"100%",padding:"10px",fontSize:"13px",background:"transparent",color:"var(--accent)",border:"1px solid var(--accentDim)"}),on:{click:function(){delete expRef.sepExportedAt;LS.expenses.set(ST.expenses);render();toast("Will be included in the next separate export")}}});
+    rx.textContent="Mark as not exported";form.appendChild(rx);
+  }
 
   w.appendChild(form);
 
