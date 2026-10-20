@@ -32,7 +32,7 @@ select{color-scheme:dark}
 <div id="app"></div>
 <script>
 var PROVINCES=["AB","BC","MB","ON","SK","N.L","YT","QC","FOREIGN"];
-var APP_VERSION="v1.8 \u2014 Oct 9, 2026";
+var APP_VERSION="v1.9 \u2014 Oct 20, 2026";
 var CATEGORIES=["Meals & Entertainment","Travel","Other","Fuel & Mileage","Telephone","Office Supplies","Subscriptions & Dues","IT Expense","Training & Education","Advertising & Promotion","Postage & Courier","Gift","Donations"];
 
 // ── Storage ──
@@ -300,8 +300,8 @@ function setCell(xml,ref,value,isString){
   }
   return xml.replace(m[0],rep);
 }
-function exportXLSX(expenses,currency,label,clientName){
-  var rows=expenses.filter(function(e){return e.currency===currency});
+function exportXLSX(expenses,currency,label,clientName,fileSuffix){
+  var rows=expenses.filter(function(e){return reimbCur(e)===currency});
   if(!rows.length)return Promise.resolve(null);
   rows.sort(function(a,b){return a.date>b.date?1:a.date<b.date?-1:0});
 
@@ -334,15 +334,14 @@ function exportXLSX(expenses,currency,label,clientName){
         // D: paid to
         xml=setCell(xml,"D"+rn,ex.vendor,true);
         // E: description
-        xml=setCell(xml,"E"+rn,buildDescription(ex),true);
+        xml=setCell(xml,"E"+rn,buildDescription(ex,true),true);
         // F: category
         xml=setCell(xml,"F"+rn,ex.category,true);
         // G: total
-        xml=setCell(xml,"G"+rn,Number(ex.total),false);
-        // H: GST (only if provided)
-        if(ex.gst!=null&&ex.gst!==""&&Number(ex.gst)>0){
-          xml=setCell(xml,"H"+rn,Number(ex.gst),false);
-        }
+        xml=setCell(xml,"G"+rn,claimAmt(ex),false);
+        // H: GST (only if provided; converted for USD->CAD items)
+        var cg=claimGst(ex);
+        if(cg!=null)xml=setCell(xml,"H"+rn,cg,false);
         // T/U: FX columns for USD
         if(currency==="USD"&&ex.cadEquiv){
           xml=setCell(xml,"T"+rn,Number(ex.cadEquiv),false);
@@ -357,7 +356,7 @@ function exportXLSX(expenses,currency,label,clientName){
     }).then(function(data){
       var prefix=currency==="CAD"?"TCC_Expense_Form_":"TCC_Financial_Expense_Form_";
       var suffix=clientName&&clientName!=="Personal"?"_"+clientName.replace(/[^a-zA-Z0-9]/g,"_"):"";
-      var fname=prefix+label+suffix+".xlsx";
+      var fname=prefix+label+suffix+(fileSuffix||"")+".xlsx";
       return{name:fname,data:data};
     });
   });
@@ -454,8 +453,9 @@ function exportReceiptsPDF(expenses,label,clientName){
 }
 
 // ── ZIP Export (bundles everything) ──
-function doExportZip(allExpenses,monthLabel){
+function doExportZip(allExpenses,monthLabel,zipSuffix){
   if(!allExpenses.length){alert("No expenses to export.");return}
+  zipSuffix=zipSuffix||"";
   // Group by client
   var groups={};
   allExpenses.forEach(function(e){var cl=e.client||"Personal";if(!groups[cl])groups[cl]=[];groups[cl].push(e)});
@@ -467,21 +467,21 @@ function doExportZip(allExpenses,monthLabel){
     var exps=groups[client].sort(function(a,b){return a.date>b.date?1:-1});
     var folder=client==="Personal"?"Personal":client.replace(/[^a-zA-Z0-9 ]/g,"_");
 
-    // Split by currency
-    var cadExps=exps.filter(function(e){return e.currency==="CAD"});
-    var usdExps=exps.filter(function(e){return e.currency==="USD"});
+    // Split by reimbursement currency (CAD = Travelers Capital Corp, USD = TCC Financial, Inc.)
+    var cadExps=exps.filter(function(e){return reimbCur(e)==="CAD"});
+    var usdExps=exps.filter(function(e){return reimbCur(e)==="USD"});
 
     // Excel files per currency
     if(cadExps.length){
       pdfPromises.push((function(ex,fld){
-        return exportXLSX(ex,"CAD",monthLabel,client).then(function(result){
+        return exportXLSX(ex,"CAD",monthLabel,client,zipSuffix).then(function(result){
           if(result)zip.file(fld+"/"+result.name,result.data);
         });
       })(cadExps,folder));
     }
     if(usdExps.length){
       pdfPromises.push((function(ex,fld){
-        return exportXLSX(ex,"USD",monthLabel,client).then(function(result){
+        return exportXLSX(ex,"USD",monthLabel,client,zipSuffix).then(function(result){
           if(result)zip.file(fld+"/"+result.name,result.data);
         });
       })(usdExps,folder));
@@ -490,14 +490,14 @@ function doExportZip(allExpenses,monthLabel){
     // Receipt PDFs per currency
     if(cadExps.length){
       pdfPromises.push((function(cl,ex,fld){
-        return exportReceiptsPDF(ex,monthLabel,cl).then(function(result){
+        return exportReceiptsPDF(ex,monthLabel+zipSuffix,cl).then(function(result){
           if(result)zip.file(fld+"/"+result.name,result.data);
         });
       })(client,cadExps,folder));
     }
     if(usdExps.length){
       pdfPromises.push((function(cl,ex,fld){
-        return exportReceiptsPDF(ex,monthLabel,cl+"_USD").then(function(result){
+        return exportReceiptsPDF(ex,monthLabel+zipSuffix,cl+"_USD").then(function(result){
           if(result)zip.file(fld+"/"+result.name,result.data);
         });
       })(client,usdExps,folder));
@@ -514,10 +514,7 @@ function doExportZip(allExpenses,monthLabel){
     });
   }).then(function(blob){
     if(!blob)return;
-    var a=document.createElement("a");
-    a.href=URL.createObjectURL(blob);
-    a.download="TCC_Expenses_"+monthLabel+".zip";
-    document.body.appendChild(a);a.click();document.body.removeChild(a);
+    downloadBlob(blob,"TCC_Expenses_"+monthLabel+zipSuffix+".zip");
   });
 }
 
@@ -584,55 +581,29 @@ function draftEmail(allExpenses,monthLabel){
   allExpenses.forEach(function(e){var cl=e.client||"Personal";if(!groups[cl])groups[cl]=[];groups[cl].push(e)});
 
   var lines=[];var grandTotalCAD=0;var grandTotalUSD=0;
+  function sumCAD(l){return l.filter(function(e){return reimbCur(e)==="CAD"}).reduce(function(a,e){return a+claimAmt(e)},0)}
+  function sumUSD(l){return l.filter(function(e){return reimbCur(e)==="USD"}).reduce(function(a,e){return a+claimAmt(e)},0)}
+  function fxNote(l){var fx=l.filter(function(e){return isFX(e)});if(!fx.length)return"";var u=fx.reduce(function(a,e){return a+Number(e.total)},0);return" (incl. USD $"+fmt(u)+" converted)"}
 
   // Personal first
   if(groups["Personal"]){
-    var pCAD=groups["Personal"].filter(function(e){return e.currency==="CAD"});
-    var pUSD=groups["Personal"].filter(function(e){return e.currency==="USD"});
-    if(pCAD.length){
-      var t=pCAD.reduce(function(s,e){return s+Number(e.total)},0);
-      lines.push("Regular TCC Expenses "+monthName+": $"+fmt(t)+" CAD");
-      grandTotalCAD+=t;
-    }
-    if(pUSD.length){
-      var tu=pUSD.reduce(function(s,e){return s+Number(e.total)},0);
-      var tcad=pUSD.reduce(function(s,e){return s+(Number(e.cadEquiv)||0)},0);
-      var line="Regular TCC Expenses "+monthName+" (USD): $"+fmt(tu)+" USD";
-      if(tcad>0)line+=" (CAD $"+fmt(tcad)+")";
-      lines.push(line);
-      grandTotalUSD+=tu;
-    }
+    var pc=sumCAD(groups["Personal"]),pu=sumUSD(groups["Personal"]);
+    if(pc>0){lines.push("Regular TCC Expenses "+monthName+": $"+fmt(pc)+" CAD"+fxNote(groups["Personal"]));grandTotalCAD+=pc}
+    if(pu>0){lines.push("Regular TCC Expenses "+monthName+" (USD): $"+fmt(pu)+" USD - reimbursed by TCC Financial, Inc.");grandTotalUSD+=pu}
   }
 
   // Client expenses
   var clientNames=Object.keys(groups).filter(function(c){return c!=="Personal"}).sort();
   clientNames.forEach(function(cl){
-    var cCAD=groups[cl].filter(function(e){return e.currency==="CAD"});
-    var cUSD=groups[cl].filter(function(e){return e.currency==="USD"});
-    if(cCAD.length){
-      var t=cCAD.reduce(function(s,e){return s+Number(e.total)},0);
-      lines.push(cl+" Expenses: $"+fmt(t)+" CAD (to be recorded on "+cl+" payment schedule and reimbursed to Travelers)");
-      grandTotalCAD+=t;
-    }
-    if(cUSD.length){
-      var tu=cUSD.reduce(function(s,e){return s+Number(e.total)},0);
-      var tcad=cUSD.reduce(function(s,e){return s+(Number(e.cadEquiv)||0)},0);
-      var line=cl+" Expenses: $"+fmt(tu)+" USD (to be recorded on "+cl+" payment schedule and reimbursed to Travelers)";
-      if(tcad>0)line+=" (CAD $"+fmt(tcad)+")";
-      lines.push(line);
-      grandTotalUSD+=tu;
-    }
+    var cc=sumCAD(groups[cl]),cu=sumUSD(groups[cl]);
+    if(cc>0){lines.push(cl+" Expenses: $"+fmt(cc)+" CAD"+fxNote(groups[cl])+" (to be recorded on "+cl+" payment schedule and reimbursed to Travelers)");grandTotalCAD+=cc}
+    if(cu>0){lines.push(cl+" Expenses: $"+fmt(cu)+" USD (to be recorded on "+cl+" payment schedule and reimbursed to TCC Financial, Inc.)");grandTotalUSD+=cu}
   });
 
   lines.push("");
-  var grandTotalCADEquiv=grandTotalCAD;
   if(grandTotalUSD>0){
-    var usdCadTotal=allExpenses.filter(function(e){return e.currency==="USD"}).reduce(function(s,e){return s+(Number(e.cadEquiv)||0)},0);
-    lines.push("CAD Total: $"+fmt(grandTotalCAD));
-    lines.push("USD Total: $"+fmt(grandTotalUSD)+" USD"+(usdCadTotal>0?" (CAD $"+fmt(usdCadTotal)+")":""));
-    if(usdCadTotal>0){
-      lines.push("Combined Total (CAD): $"+fmt(grandTotalCAD+usdCadTotal));
-    }
+    if(grandTotalCAD>0)lines.push("CAD Total (Travelers Capital Corp): $"+fmt(grandTotalCAD));
+    lines.push("USD Total (TCC Financial, Inc.): $"+fmt(grandTotalUSD)+" USD");
   } else {
     lines.push("Total: $"+fmt(grandTotalCAD)+" CAD");
   }
@@ -660,16 +631,19 @@ function draftEmail(allExpenses,monthLabel){
   },2000);
 }
 
-// ── CSV fallback ──
-function exportCSV(expenses,currency,label){
-  var rows=expenses.filter(function(e){return e.currency===currency});
-  if(!rows.length)return false;
-  var hdr="Date,Province,Paid To,Description,Expense Category,Total,Actual GST/HST Paid,Client,Report Month";
-  var lines=[hdr];
-  rows.forEach(function(e){lines.push('"'+e.date+'","'+e.province+'","'+e.vendor+'","'+buildDescription(e)+'","'+e.category+'",'+e.total+','+(e.gst||"")+','+(e.client||"Personal")+','+rmo(e))});
-  var blob=new Blob([lines.join("\n")],{type:"text/csv"});
-  var a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=currency+"_expense_log_"+label+".csv";
-  document.body.appendChild(a);a.click();document.body.removeChild(a);return true;
+// ── CSV export (one file, all currencies) ──
+function csvCell(v){v=v==null?"":String(v);return '"'+v.replace(/"/g,'""')+'"'}
+function exportCSV(expenses,label,fileSuffix){
+  if(!expenses.length)return false;
+  var rows=expenses.slice().sort(function(a,b){return a.date>b.date?1:a.date<b.date?-1:0});
+  var hdr=["Date","Province","Paid To","Description","Expense Category","Currency","Total","Actual GST/HST Paid","Reimburse In","Claim Amount","Claim GST/HST","CAD Equivalent","Client","Report Month","Separate Submission"];
+  var lines=[hdr.map(csvCell).join(",")];
+  rows.forEach(function(e){
+    var cg=claimGst(e);
+    lines.push([e.date,e.province,e.vendor,buildDescription(e),e.category,e.currency||"CAD",Number(e.total).toFixed(2),(e.gst!=null&&e.gst!=="")?Number(e.gst).toFixed(2):"",reimbCur(e),claimAmt(e)?claimAmt(e).toFixed(2):"",cg!=null?cg.toFixed(2):"",(e.currency==="USD"&&e.cadEquiv)?Number(e.cadEquiv).toFixed(2):"",e.client||"Personal",rmo(e),isSeparate(e)?"Yes":"No"].map(csvCell).join(","));
+  });
+  var blob=new Blob(["\uFEFF"+lines.join("\r\n")],{type:"text/csv;charset=utf-8"});
+  downloadBlob(blob,"TCC_expense_log_"+label+(fileSuffix||"")+".csv");return true;
 }
 
 // ── Helpers ──
@@ -681,10 +655,37 @@ function today(){var d=new Date();return d.getFullYear()+"-"+("0"+(d.getMonth()+
 // Stored as e.reportMonth ("YYYY-MM") only when it differs from the receipt date's month.
 // Blank means "follow the receipt date", so editing the date keeps them in sync.
 function rmo(e){return(e&&e.reportMonth)||mk(e&&e.date)}
+// Reimbursement currency: CAD = Travelers Capital Corp form, USD = TCC Financial, Inc. form.
+// CAD expenses are always reimbursed in CAD. USD expenses default to CAD (converted) unless e.reimburse==="USD".
+function reimbCur(e){if(!e||e.currency!=="USD")return"CAD";return e.reimburse==="USD"?"USD":"CAD"}
+function isSeparate(e){return!!(e&&e.separate)}
+function isFX(e){return!!(e&&e.currency==="USD"&&reimbCur(e)==="CAD")}
+// Amount in the reimbursement currency (USD->CAD items use the bank CAD equivalent)
+function claimAmt(e){if(isFX(e))return Number(e.cadEquiv)||0;return Number(e.total)||0}
+function claimGst(e){if(e.gst==null||e.gst==="")return null;var g=Number(e.gst);if(!(g>0))return null;if(isFX(e)){var t=Number(e.total)||0;var c=Number(e.cadEquiv)||0;return t>0&&c>0?Math.round(g*c/t*100)/100:null}return g}
+// Month-end forms need a CAD amount for every USD item being converted
+function fxReady(list){var p=list.filter(function(e){return isFX(e)&&!e.cadEquiv});if(!p.length)return true;alert(p.length+" USD expense"+(p.length>1?"s have":" has")+" no CAD amount yet ("+p.map(function(e){return e.vendor}).join(", ")+"). Run FX Reconcile first, or set them to Reimburse In USD.");return false}
+function mainItems(list){return list.filter(function(e){return!isSeparate(e)})}
+function sepItems(list){return list.filter(function(e){return isSeparate(e)})}
+function downloadBlob(blob,name){var a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(function(){URL.revokeObjectURL(a.href)},60000)}
 function normReportMonth(e){if(!e)return e;if(!e.reportMonth||e.reportMonth===mk(e.date))e.reportMonth="";return e}
 function isCarried(e){return!!(e&&e.reportMonth&&e.reportMonth!==mk(e.date))}
 function addMonths(k,n){var p=k.split("-");var d=new Date(+p[0],+p[1]-1+n,1);return d.getFullYear()+"-"+("0"+(d.getMonth()+1)).slice(-2)}
 // Dropdown of report months: receipt month (default) plus nearby months
+// "Reimburse in" picker for USD expenses. get()/set(v) wrap wherever the value lives.
+function reimburseRow(get,set){
+  var wr=h("div");wr.appendChild(h("label",{s:sL}));wr.lastChild.textContent="Reimburse In";
+  var r=h("div",{s:{display:"flex",gap:"8px"}});
+  [["CAD","CAD \u00B7 Travelers Capital"],["USD","USD \u00B7 TCC Financial"]].forEach(function(o){
+    var active=(get()||"CAD")===o[0];
+    var btn=h("button",{s:merge(sB,{flex:"1",padding:"10px 6px",fontSize:"13px",background:active?"var(--accent)":"var(--card)",color:active?"#fff":"var(--dim)",border:active?"1px solid var(--accent)":"1px solid var(--border)"}),on:{click:function(){set(o[0])}}});
+    btn.textContent=o[1];r.appendChild(btn);
+  });
+  wr.appendChild(r);
+  var note=h("div",{s:{fontSize:"11px",color:"var(--dim)",marginTop:"6px"}});
+  note.textContent=(get()||"CAD")==="USD"?"Paid in USD; claimed on the TCC Financial, Inc. form. No CAD conversion needed.":"Converted to CAD and claimed on the Travelers Capital Corp form. Needs the bank CAD amount (FX Reconcile).";
+  wr.appendChild(note);return wr;
+}
 function reportMonthSelect(e,style,onPick){
   var base=mk(e.date)||mk(today());var cur=rmo(e)||base;
   var hi=mk(today())>base?mk(today()):base;var opts={};
@@ -803,7 +804,7 @@ var sI={width:"100%",padding:"13px 14px",borderRadius:"10px",border:"1px solid v
 var sL={display:"block",fontSize:"12px",fontWeight:"600",color:"var(--dim)",marginBottom:"6px",textTransform:"uppercase",letterSpacing:"0.05em"};
 var sB={border:"none",borderRadius:"var(--radius)",padding:"14px 20px",fontSize:"15px",fontWeight:"600",cursor:"pointer",fontFamily:"inherit"};
 function merge(){var r={};for(var i=0;i<arguments.length;i++){var o=arguments[i];if(o){var k=Object.keys(o);for(var j=0;j<k.length;j++)r[k[j]]=o[k[j]]}}return r}
-function emptyForm(){return{date:today(),province:"AB",vendor:"",what:"",who:"",category:"Meals & Entertainment",total:"",gst:"",currency:"CAD",client:"Personal",reportMonth:""}}
+function emptyForm(){return{date:today(),province:"AB",vendor:"",what:"",who:"",category:"Meals & Entertainment",total:"",gst:"",currency:"CAD",reimburse:"CAD",client:"Personal",reportMonth:"",separate:false}}
 
 // ── Completeness check ──
 function needsReceipt(e){
@@ -815,14 +816,15 @@ function needsReceipt(e){
 }
 function isIncomplete(e){
   if(!e.vendor||!e.date||!e.what||!e.who||!e.total||!e.category||!e.province)return true;
-  if(e.currency==="USD"&&!e.cadEquiv)return true;
+  if(isFX(e)&&!e.cadEquiv)return true;
   if(needsReceipt(e))return true;
   return false;
 }
-function buildDescription(e){
+function buildDescription(e,forClaim){
   var w=e.what||"";var wh=e.who||"";
-  if(w&&wh)return w+" - "+wh;
-  return w||wh||"";
+  var d=(w&&wh)?w+" - "+wh:(w||wh||"");
+  if(forClaim&&isFX(e)&&e.cadEquiv)d+=(d?" ":"")+"(USD $"+Number(e.total).toFixed(2)+")";
+  return d;
 }
 
 // ── Image compression (keeps under 5MB API limit) ──
@@ -970,7 +972,8 @@ function renderList(){
   ST.expenses.forEach(function(e){monthSet[rmo(e)]=true});
   var months=Object.keys(monthSet).sort().reverse();
   var filt=ST.expenses.filter(function(e){return rmo(e)===ST.month}).sort(function(a,b){return b.date>a.date?1:b.date<a.date?-1:b.id-a.id});
-  var cadT=0,usdT=0;filt.forEach(function(e){if(e.currency==="CAD")cadT+=Number(e.total);else usdT+=Number(e.total)});
+  var mainF=mainItems(filt),sepF=sepItems(filt);
+  var cadT=0,usdT=0,fxPend=0;mainF.forEach(function(e){if(reimbCur(e)==="CAD"){cadT+=claimAmt(e);if(isFX(e)&&!e.cadEquiv)fxPend++}else usdT+=claimAmt(e)});
 
   var hdr=h("div",{s:{padding:"54px 20px 0",position:"sticky",top:"0",background:"var(--bg)",zIndex:"10"}});
   var topRow=h("div",{s:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"16px"}});
@@ -988,12 +991,18 @@ function renderList(){
     var lbl=ml(ST.month).replace(" ","_");
     var hasUSD=filt.some(function(e){return e.currency==="USD"});
     var menuItems=[
-      {label:"Export All (ZIP)",action:function(){doExportZip(filt,lbl)}},
-      {label:"Draft Email",action:function(){draftEmail(filt,lbl)}},
-      {label:"Export CSV",action:function(){var any=exportCSV(filt,"CAD",lbl);any=exportCSV(filt,"USD",lbl)||any;if(!any)alert("No expenses.")}}
+      {label:"Month-End Export (ZIP)",action:function(){if(fxReady(mainF))doExportZip(mainF,lbl)}},
+      {label:"Draft Email",action:function(){if(fxReady(mainF))draftEmail(mainF,lbl)}},
+      {label:"Export CSV",action:function(){if(!exportCSV(mainF,lbl))alert("No expenses.")}}
     ];
     if(hasUSD)menuItems.splice(1,0,{label:"FX Reconcile (USD)",action:function(){up({view:"fxreconcile",_fxMonth:ST.month})}});
+    if(sepF.length){
+      menuItems.push({sep:true});
+      menuItems.push({label:"Separate Items (ZIP)",action:function(){if(fxReady(sepF))doExportZip(sepF,lbl,"_Separate")}});
+      menuItems.push({label:"Separate Items (CSV)",action:function(){exportCSV(sepF,lbl,"_Separate")}});
+    }
     menuItems.forEach(function(it){
+      if(it.sep){menu.appendChild(h("div",{s:{height:"1px",background:"var(--border)",margin:"6px 4px"}}));return}
       var btn=h("button",{s:merge(sB,{display:"block",width:"100%",textAlign:"left",padding:"12px 14px",fontSize:"14px",background:"transparent",color:"var(--text)",borderRadius:"8px"}),on:{click:function(){menu.remove();it.action()}}});
       btn.textContent=it.label;menu.appendChild(btn);
     });
@@ -1014,12 +1023,14 @@ function renderList(){
 
   var sumRow=h("div",{s:{padding:"0 20px 12px",display:"flex",gap:"12px"}});
   function sumCard(l,v){var c=h("div",{s:{flex:"1",background:"var(--card)",borderRadius:"12px",padding:"14px 16px",border:"1px solid var(--border)"}});var lb=h("div",{s:{fontSize:"11px",color:"var(--dim)",fontWeight:"600",marginBottom:"4px"}});lb.textContent=l;var vl=h("div",{s:{fontSize:"22px",fontWeight:"700",letterSpacing:"-0.02em"}});vl.textContent=v;c.appendChild(lb);c.appendChild(vl);return c}
-  sumRow.appendChild(sumCard("CAD","$"+cadT.toFixed(2)));
+  sumRow.appendChild(sumCard("CAD"+(fxPend?" *":""),"$"+cadT.toFixed(2)));
   if(usdT>0)sumRow.appendChild(sumCard("USD","$"+usdT.toFixed(2)));
-  sumRow.appendChild(sumCard("Items",""+filt.length));
+  sumRow.appendChild(sumCard("Items",""+mainF.length));
+  if(sepF.length)sumRow.appendChild(sumCard("Separate",""+sepF.length));
   var incCount=filt.filter(function(e){return isIncomplete(e)}).length;
   if(incCount>0)sumRow.appendChild(sumCard("\u26A0",""+incCount));
   $app.appendChild(sumRow);
+  if(fxPend){var fxn=h("div",{s:{padding:"0 20px 10px",fontSize:"11px",color:"var(--dim)"}});fxn.textContent="* "+fxPend+" USD item"+(fxPend>1?"s":"")+" not yet converted to CAD (FX Reconcile)";$app.appendChild(fxn)}
 
   var list=h("div",{s:{padding:"0 20px"}});
   if(!filt.length){
@@ -1030,7 +1041,7 @@ function renderList(){
   } else {
     filt.forEach(function(ex){
       var rowIncomplete=isIncomplete(ex);
-      var row=h("div",{s:{background:"var(--card)",borderRadius:"12px",padding:"14px 16px",marginBottom:"8px",border:"1px solid "+(rowIncomplete?"var(--orange)":"var(--border)"),cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"},
+      var row=h("div",{s:{background:"var(--card)",borderRadius:"12px",padding:"14px 16px",marginBottom:"8px",border:"1px solid "+(rowIncomplete?"var(--orange)":"var(--border)"),cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",opacity:isSeparate(ex)?"0.55":"1"},
         on:{click:function(){RCPT.get(ex.id).then(function(r){up({view:"detail",sel:ex,selImg:r||null,delId:null})})}}});
       var left=h("div",{s:{flex:"1",minWidth:"0"}});
       var nameRow=h("div",{s:{display:"flex",alignItems:"center",gap:"8px",marginBottom:"4px"}});
@@ -1041,6 +1052,9 @@ function renderList(){
       if(ex.client&&ex.client!=="Personal"){
         var cbadge=h("span",{s:{fontSize:"10px",fontWeight:"700",padding:"2px 7px",borderRadius:"6px",background:"rgba(245,158,11,0.2)",color:"var(--orange)"}});cbadge.textContent=ex.client;nameRow.appendChild(cbadge);
       }
+      if(isSeparate(ex)){
+        var sbadge=h("span",{s:{fontSize:"10px",fontWeight:"700",padding:"2px 7px",borderRadius:"6px",background:"rgba(34,197,94,0.15)",color:"var(--green)",whiteSpace:"nowrap"}});sbadge.textContent="SEPARATE";nameRow.appendChild(sbadge);
+      }
       // Show when the receipt date falls outside this report month
       if(isCarried(ex)){
         var mbadge=h("span",{s:{fontSize:"10px",fontWeight:"700",padding:"2px 7px",borderRadius:"6px",background:"var(--card)",border:"1px solid var(--border)",color:"var(--dim)",whiteSpace:"nowrap"}});mbadge.textContent="from "+ml(mk(ex.date)).split(" ")[0];nameRow.appendChild(mbadge);
@@ -1049,7 +1063,8 @@ function renderList(){
       desc.textContent=buildDescription(ex)+" \u00B7 "+ex.category;
       left.appendChild(nameRow);left.appendChild(desc);
       var right=h("div",{s:{textAlign:"right",marginLeft:"12px",flexShrink:"0"}});
-      var amt=h("div",{s:{fontWeight:"700",fontSize:"16px",fontVariantNumeric:"tabular-nums"}});amt.textContent="$"+Number(ex.total).toFixed(2);
+      var amt=h("div",{s:{fontWeight:"700",fontSize:"16px",fontVariantNumeric:"tabular-nums"}});amt.textContent="$"+Number(ex.total).toFixed(2)+(ex.currency==="USD"?" USD":"");
+      if(isFX(ex)){var fxl=h("div",{s:{fontSize:"11px",color:ex.cadEquiv?"var(--dim)":"var(--orange)"}});fxl.textContent=ex.cadEquiv?"CAD $"+Number(ex.cadEquiv).toFixed(2):"CAD pending";right.appendChild(fxl)}
       var dt=h("div",{s:{fontSize:"12px",color:"var(--dim)"}});dt.textContent=ex.date;
       right.appendChild(amt);right.appendChild(dt);
       if(isIncomplete(ex)){
@@ -1369,6 +1384,7 @@ function renderBatch(){
       var cuR=h("div",{s:{display:"flex",gap:"8px"}});
       ["CAD","USD"].forEach(function(c){var active=ST._batchCurrency===c;var btn=h("button",{s:merge(sB,{flex:"1",padding:"10px",fontSize:"14px",background:active?"var(--accent)":"var(--card)",color:active?"#fff":"var(--dim)",border:active?"1px solid var(--accent)":"1px solid var(--border)"}),on:{click:function(){ST._batchCurrency=c;render()}}});btn.textContent=c;cuR.appendChild(btn)});
       cuSec.appendChild(cuR);w.appendChild(cuSec);
+      if(ST._batchCurrency==="USD"){var rbW=h("div",{s:{marginTop:"12px"}});rbW.appendChild(reimburseRow(function(){return ST._batchReimburse},function(v){ST._batchReimburse=v;render()}));w.appendChild(rbW)}
 
       // Client picker for batch
       if(!ST._batchClient)ST._batchClient="Personal";
@@ -1383,14 +1399,14 @@ function renderBatch(){
         var promises=[];var rcptFails=0;var goMonth=null;
         ST.batchResults.forEach(function(res){
           if(!res.data||res.removed)return;var d=res.data;var id=newId();
-          var entry={id:id,date:d.date||today(),province:PROVINCES.indexOf(d.province)>=0?d.province:"AB",vendor:d.vendor||"Unknown",what:d.what||d.description||"",who:d.who||"",category:CATEGORIES.indexOf(d.category)>=0?d.category:"Other",total:Number(d.total)||0,gst:(d.gst!=null&&d.gst!==0)?Number(d.gst):null,currency:ST._batchCurrency||"CAD",client:ST._batchClient||"Personal",reportMonth:/^\d{4}-\d{2}$/.test(d.reportMonth||"")?d.reportMonth:""};
+          var entry={id:id,date:d.date||today(),province:PROVINCES.indexOf(d.province)>=0?d.province:"AB",vendor:d.vendor||"Unknown",what:d.what||d.description||"",who:d.who||"",category:CATEGORIES.indexOf(d.category)>=0?d.category:"Other",total:Number(d.total)||0,gst:(d.gst!=null&&d.gst!==0)?Number(d.gst):null,currency:ST._batchCurrency||"CAD",reimburse:(ST._batchCurrency==="USD"&&ST._batchReimburse==="USD")?"USD":"CAD",separate:false,client:ST._batchClient||"Personal",reportMonth:/^\d{4}-\d{2}$/.test(d.reportMonth||"")?d.reportMonth:""};
           normReportMonth(entry);if(!goMonth)goMonth=rmo(entry);
           ST.expenses.unshift(entry);
           if(res.img)promises.push(compressForStorage(res.img).then(function(small){return RCPT.set(id,small)})["catch"](function(){rcptFails++}));
         });LS.expenses.set(ST.expenses);
         Promise.all(promises).then(function(){
           if(rcptFails)toast("\u26A0\uFE0F "+rcptFails+" receipt"+(rcptFails!==1?"s":"")+" could not be saved \u2014 expense data kept, use Download Backup to verify");
-          up({view:"list",month:goMonth||mk(today()),_editIdx:null,_batchCurrency:null,_batchClient:null});
+          up({view:"list",month:goMonth||mk(today()),_editIdx:null,_batchCurrency:null,_batchReimburse:null,_batchClient:null});
         });
       }}});
       saveAll.textContent="Save All ("+activeResults.length+")";w.appendChild(saveAll);
@@ -1532,6 +1548,7 @@ function renderAdd(){
   var cuR=h("div",{s:{display:"flex",gap:"8px"}});
   ["CAD","USD"].forEach(function(c){var active=ST.form.currency===c;var btn=h("button",{s:merge(sB,{flex:"1",padding:"12px",fontSize:"15px",background:active?"var(--accent)":"var(--card)",color:active?"#fff":"var(--dim)",border:active?"1px solid var(--accent)":"1px solid var(--border)"}),on:{click:function(){ST.form.currency=c;render()}}});btn.textContent=c;cuR.appendChild(btn)});
   cuW.appendChild(cuR);form.appendChild(cuW);
+  if(ST.form.currency==="USD")form.appendChild(reimburseRow(function(){return ST.form.reimburse},function(v){ST.form.reimburse=v;render()}));
 
   // Client
   var clW=h("div");clW.appendChild(h("label",{s:sL}));clW.lastChild.textContent="Client";
@@ -1724,6 +1741,7 @@ function renderDetail(){
   var cuR=h("div",{s:{display:"flex",gap:"8px"}});
   ["CAD","USD"].forEach(function(c){var active=expRef.currency===c;var btn=h("button",{s:merge(sB,{flex:"1",padding:"12px",fontSize:"15px",background:active?"var(--accent)":"var(--card)",color:active?"#fff":"var(--dim)",border:active?"1px solid var(--accent)":"1px solid var(--border)"}),on:{click:function(){expRef.currency=c;LS.expenses.set(ST.expenses);render()}}});btn.textContent=c;cuR.appendChild(btn)});
   cuW.appendChild(cuR);form.appendChild(cuW);
+  if(expRef.currency==="USD")form.appendChild(reimburseRow(function(){return expRef.reimburse},function(v){expRef.reimburse=v;LS.expenses.set(ST.expenses);render()}));
 
   // Client
   var clW=h("div");clW.appendChild(h("label",{s:sL}));clW.lastChild.textContent="Client";
@@ -1733,10 +1751,19 @@ function renderDetail(){
   clS.addEventListener("change",function(ev){expRef.client=ev.target.value;LS.expenses.set(ST.expenses)});
   clW.appendChild(clS);form.appendChild(clW);
 
-  // CAD Equivalent for USD
+  // CAD Equivalent for USD items being converted
   if(expRef.currency==="USD"){
-    form.appendChild(editField("CAD Equivalent","cadEquiv","number",expRef.cadEquiv));
+    form.appendChild(editField(isFX(expRef)?"CAD Equivalent (bank charge)":"CAD Equivalent (optional)","cadEquiv","number",expRef.cadEquiv));
   }
+
+  // Submit separately toggle
+  var spW=h("div",{s:{background:"var(--card)",border:"1px solid "+(isSeparate(expRef)?"var(--green)":"var(--border)"),borderRadius:"12px",padding:"12px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:"12px",cursor:"pointer"},on:{click:function(){expRef.separate=!isSeparate(expRef);LS.expenses.set(ST.expenses);render();toast(isSeparate(expRef)?"Excluded from month-end export":"Included in month-end export")}}});
+  var spT=h("div");
+  spT.appendChild(h("div",{s:{fontSize:"14px",fontWeight:"600"}}));spT.lastChild.textContent="Submit separately";
+  spT.appendChild(h("div",{s:{fontSize:"11px",color:"var(--dim)",marginTop:"2px"}}));spT.lastChild.textContent=isSeparate(expRef)?"Left out of the month-end export and totals. Export via Separate Items.":"Included in the regular month-end export.";
+  var sw=h("div",{s:{width:"46px",height:"28px",borderRadius:"14px",background:isSeparate(expRef)?"var(--green)":"var(--border)",position:"relative",flexShrink:"0",transition:"background 0.15s"}});
+  sw.appendChild(h("div",{s:{position:"absolute",top:"3px",left:isSeparate(expRef)?"21px":"3px",width:"22px",height:"22px",borderRadius:"11px",background:"#fff",transition:"left 0.15s"}}));
+  spW.appendChild(spT);spW.appendChild(sw);form.appendChild(spW);
 
   w.appendChild(form);
 
@@ -1748,7 +1775,7 @@ function renderDetail(){
   sumCard.appendChild(h("span",{s:{fontWeight:"600"}}));sumCard.lastChild.textContent="$"+netVal;
   w.appendChild(sumCard);
 
-  if(expRef.currency==="USD"&&expRef.cadEquiv){
+  if(isFX(expRef)&&expRef.cadEquiv){
     var fxCard=h("div",{s:{background:"var(--card)",borderRadius:"12px",border:"1px solid var(--border)",padding:"14px 16px",marginTop:"6px",display:"flex",justifyContent:"space-between",fontSize:"14px"}});
     fxCard.appendChild(h("span",{s:{color:"var(--dim)"}}));fxCard.lastChild.textContent="FX Rate";
     fxCard.appendChild(h("span",{s:{fontWeight:"600"}}));fxCard.lastChild.textContent=(Number(expRef.cadEquiv)/Number(expRef.total)).toFixed(4);
@@ -1783,10 +1810,10 @@ function renderFXReconcile(){
   var ttl=h("h2",{s:{fontSize:"20px",fontWeight:"700"}});ttl.textContent="FX Reconcile";
   nav.appendChild(back);nav.appendChild(ttl);nav.appendChild(h("div",{s:{width:"60px"}}));w.appendChild(nav);
 
-  var usdExps=ST.expenses.filter(function(e){return e.currency==="USD"&&rmo(e)===(ST._fxMonth||ST.month)});
+  var usdExps=ST.expenses.filter(function(e){return isFX(e)&&rmo(e)===(ST._fxMonth||ST.month)});
 
   if(!usdExps.length){
-    var empty=h("div",{s:{textAlign:"center",padding:"40px 20px",color:"var(--dim)"}});empty.textContent="No USD expenses for this month.";
+    var empty=h("div",{s:{textAlign:"center",padding:"40px 20px",color:"var(--dim)"}});empty.textContent="No USD expenses to convert this month. Items reimbursed in USD don't need reconciling.";
     w.appendChild(empty);$app.appendChild(w);return;
   }
 
